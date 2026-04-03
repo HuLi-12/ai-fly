@@ -1,0 +1,46 @@
+{
+  "rules": [
+    {
+      "name": "fault-vibration-temperature",
+      "scene_type": "fault_diagnosis",
+      "keywords": ["E-204", "vibration", "temperature", "振动", "温度"],
+      "risk_level": "high",
+      "message": "Vibration combined with temperature rise requires shutdown and human approval before restart."
+    },
+    {
+      "name": "fault-sensor-alarm",
+      "scene_type": "fault_diagnosis",
+      "keywords": ["sensor", "alarm", "传感", "报警"],
+      "risk_level": "medium",
+      "message": "Sensor anomalies require calibration cross-check before the diagnosis can be closed."
+    },
+    {
+      "name": "process-heat-deviation",
+      "scene_type": "process_deviation",
+      "keywords": ["heat treatment", "curing", "温度偏差", "热处理", "固化"],
+      "risk_level": "high",
+      "message": "Thermal process deviation requires batch hold and process engineering review."
+    },
+    {
+      "name": "process-torque-window",
+      "scene_type": "process_deviation",
+      "keywords": ["torque", "fixture", "扭矩", "夹具"],
+      "risk_level": "medium",
+      "message": "Tooling or torque deviation requires verification against the approved process card."
+    },
+    {
+      "name": "quality-critical-dimension",
+      "scene_type": "quality_inspection",
+      "keywords": ["dimension", "critical size", "尺寸", "关键尺寸"],
+      "risk_level": "high",
+      "message": "Critical dimension defects require lot quarantine and MRB review."
+    },
+    {
+      "name": "quality-surface-defect",
+      "scene_type": "quality_inspection",
+      "keywords": ["scratch", "surface defect", "划伤", "表面缺陷"],
+      "risk_level": "medium",
+      "message": "Surface defects require repeat inspection and traceability verification."
+    }
+  ]
+}

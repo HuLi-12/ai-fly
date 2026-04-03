@@ -1,0 +1,34 @@
+# Local runtime and model artifacts
+runtime/
+models/
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Project virtualenvs and packaging output
+yixiutong-mvp/.venv/
+yixiutong-mvp/yixiutong_mvp.egg-info/
+yixiutong-mvp/.env
+
+# Frontend build/cache
+yixiutong-mvp/apps/web/node_modules/
+yixiutong-mvp/apps/web/dist/
+yixiutong-mvp/apps/web/tsconfig.tsbuildinfo
+
+# Large downloaded source references kept local only
+materials/knowledge/official_refs/raw/
+
+# Local decoded/source article artifacts
+wechat_article.html
+wechat_article_decoded_fixed.html
+wechat_article_decoded_fragment.html
+wechat_article_text.txt
+wechat_article_text_fixed.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
