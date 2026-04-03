@@ -1,6 +1,6 @@
 # Local runtime and model artifacts
-runtime/
-models/
+/runtime/
+/models/
 
 # Python
 **/__pycache__/
@@ -28,7 +28,7 @@ wechat_article_decoded_fixed.html
 wechat_article_decoded_fragment.html
 wechat_article_text.txt
 wechat_article_text_fixed.txt
-.git-ssh/
+/.git-ssh/
 
 # OS/editor noise
 .DS_Store
