@@ -33,3 +33,7 @@ wechat_article_text_fixed.txt
 # OS/editor noise
 .DS_Store
 Thumbs.db
+
+
+*.local.json
+startup.md
