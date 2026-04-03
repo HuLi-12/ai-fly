@@ -28,6 +28,7 @@ wechat_article_decoded_fixed.html
 wechat_article_decoded_fragment.html
 wechat_article_text.txt
 wechat_article_text_fixed.txt
+.git-ssh/
 
 # OS/editor noise
 .DS_Store
