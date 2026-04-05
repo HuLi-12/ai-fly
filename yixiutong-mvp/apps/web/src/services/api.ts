@@ -31,6 +31,9 @@ export type DiagnosisResponse = {
   storage_mode: "workspace-locked";
   provider_used: string;
   scene_type: SceneType;
+  route_confidence: number;
+  route_reason: string;
+  route_signals: string[];
   evidence: Array<{
     evidence_id: string;
     source_type: string;

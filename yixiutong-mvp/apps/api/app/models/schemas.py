@@ -17,6 +17,13 @@ class DiagnosisRequest(BaseModel):
     scene_type: SceneType = Field(default="fault_diagnosis")
 
 
+class RouteDecision(BaseModel):
+    scene_type: SceneType = "fault_diagnosis"
+    confidence: float = 0.0
+    reason: str = ""
+    matched_signals: list[str] = Field(default_factory=list)
+
+
 class EvidenceItem(BaseModel):
     evidence_id: str = ""
     source_type: str
@@ -119,6 +126,9 @@ class DiagnosisResponse(BaseModel):
     storage_mode: Literal["workspace-locked"]
     provider_used: str
     scene_type: SceneType
+    route_confidence: float = 0.0
+    route_reason: str = ""
+    route_signals: list[str] = Field(default_factory=list)
     evidence: list[EvidenceItem]
     diagnosis: DiagnosisResult
     risk_level: Literal["low", "medium", "high"]

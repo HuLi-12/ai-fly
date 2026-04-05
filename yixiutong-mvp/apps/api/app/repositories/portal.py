@@ -500,6 +500,50 @@ class PortalRepository:
             items = [item for item in items if lowered in item["title"].lower() or lowered in item["summary"].lower() or lowered in item["symptom_text"].lower()]
         return items
 
+    def _work_order_to_case_memory(self, work_order: dict) -> dict | None:
+        final_resolution = str(work_order.get("final_resolution", "") or "").strip()
+        if not final_resolution:
+            return None
+
+        draft = work_order.get("work_order_draft", {}) or {}
+        diagnosis = work_order.get("diagnosis", {}) or {}
+        fault_code = draft.get("fault_code") or work_order["title"].split("|")[-1].strip()
+        possible_causes = "；".join(diagnosis.get("possible_causes", [])[:2])
+        recommended_actions = "；".join(diagnosis.get("recommended_actions", [])[:2])
+        snippet_parts = [
+            f"问题编号：{fault_code}",
+            f"异常现象：{work_order['symptom_text']}",
+            f"可能原因：{possible_causes}" if possible_causes else "",
+            f"建议动作：{recommended_actions}" if recommended_actions else "",
+            f"最终结论：{final_resolution}",
+        ]
+        snippet = " ".join(part for part in snippet_parts if part).strip()
+        return {
+            "id": f"case-memory-{work_order['work_order_id']}",
+            "source_type": "case_memory",
+            "scene_type": work_order["scene_type"],
+            "title": f"闭环案例 | {fault_code}",
+            "snippet": snippet[:480],
+            "path": f"{self.db_path}#{work_order['work_order_id']}",
+        }
+
+    def list_case_memory_items(self, scene_type: str | None = None, limit: int = 12) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM work_orders ORDER BY updated_at DESC").fetchall()
+
+        items: list[dict] = []
+        for row in rows:
+            work_order = self._row_to_work_order(row)
+            if scene_type and work_order["scene_type"] != scene_type:
+                continue
+            memory_item = self._work_order_to_case_memory(work_order)
+            if memory_item is None:
+                continue
+            items.append(memory_item)
+            if len(items) >= limit:
+                break
+        return items
+
     def get_work_order_detail(self, work_order_id: str) -> dict:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM work_orders WHERE work_order_id = ?", (work_order_id,)).fetchone()

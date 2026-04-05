@@ -34,6 +34,9 @@ def test_main_chain_returns_required_fields(monkeypatch):
     data = response.json()
     assert data["storage_mode"] == "workspace-locked"
     assert data["scene_type"] == "fault_diagnosis"
+    assert data["route_confidence"] > 0
+    assert data["route_reason"]
+    assert "route_signals" in data
     assert len(data["evidence"]) >= 1
     assert "evidence_id" in data["evidence"][0]
     assert "retrieval_method" in data["evidence"][0]
@@ -123,3 +126,16 @@ def test_confirm_and_feedback_routes(monkeypatch):
     )
     assert feedback_response.status_code == 200, feedback_response.text
     assert feedback_response.json()["saved"] is True
+
+    replay_response = client.post(
+        "/api/v1/diagnosis/start",
+        json={
+            "fault_code": "QA-305",
+            "symptom_text": "Surface scratch and edge burr were found during final inspection.",
+            "device_type": "Final inspection bench",
+            "context_notes": "Suspect lot shares the same workstation and handling shift.",
+            "scene_type": "quality_inspection",
+        },
+    )
+    assert replay_response.status_code == 200, replay_response.text
+    assert any(item["source_type"] == "case_memory" for item in replay_response.json()["evidence"])

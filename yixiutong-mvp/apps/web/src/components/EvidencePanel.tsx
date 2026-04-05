@@ -13,6 +13,14 @@ type EvidenceItem = {
   model_rerank_score?: number;
 };
 
+const sourceTypeLabel: Record<string, string> = {
+  manual: "手册",
+  case: "案例",
+  case_memory: "闭环案例记忆",
+  template: "模板",
+  knowledge: "知识条目",
+};
+
 export function EvidencePanel(props: { evidence: EvidenceItem[] }) {
   return (
     <section style={panelStyle}>
@@ -23,7 +31,8 @@ export function EvidencePanel(props: { evidence: EvidenceItem[] }) {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <strong>{item.title}</strong>
               <span style={{ color: "#5a6d7d" }}>
-                {item.source_type} / {item.retrieval_method ?? "semantic"} / 最终分 {item.score.toFixed(2)}
+                {sourceTypeLabel[item.source_type] ?? item.source_type} / {item.retrieval_method ?? "semantic"} / 最终分{" "}
+                {item.score.toFixed(2)}
               </span>
             </div>
             <p style={{ marginBottom: 10, lineHeight: 1.7 }}>{item.snippet}</p>

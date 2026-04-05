@@ -100,6 +100,9 @@ export function DiagnosisPage(props: Props) {
                 sceneType={workspace.result.scene_type}
                 confidence={workspace.result.confidence}
                 triggeredRules={workspace.result.triggered_rules}
+                routeConfidence={workspace.result.route_confidence}
+                routeReason={workspace.result.route_reason}
+                routeSignals={workspace.result.route_signals}
               />
               <WorkOrderPreview workOrder={workspace.result.work_order_draft} validationResult={workspace.result.validation_result} />
             </>

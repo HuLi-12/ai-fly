@@ -16,12 +16,15 @@ from app.models.schemas import (
     DiagnosisResult,
     EvidenceItem,
     ExecutionTraceItem,
+    RouteDecision,
     TraceabilityItem,
     TriggeredRule,
     ValidationResult,
     WorkOrderDraft,
+    WorkOrderStepItem,
 )
 from app.repositories.corpus import load_index
+from app.repositories.portal import PortalRepository
 from app.services.confidence import compute_confidence
 from app.services.retrieval import search
 from app.services.rules import evaluate_risk_details, load_rules
@@ -31,6 +34,7 @@ from app.services.work_orders import build_work_order_draft, validate_work_order
 
 class WorkflowState(TypedDict, total=False):
     request: DiagnosisRequest
+    route_decision: RouteDecision
     task_type: str
     evidence: list[EvidenceItem]
     risk_level: str
@@ -48,18 +52,12 @@ class WorkflowState(TypedDict, total=False):
     retrieval_attempts: int
     second_opinion_attempts: int
     repair_attempts: int
+    case_memory_count: int
 
 
 def _append_trace(state: WorkflowState, node: str, summary: str, detail: str = "", status: str = "completed") -> None:
     trace = list(state.get("execution_trace", []))
-    trace.append(
-        ExecutionTraceItem(
-            node=node,
-            status=status,
-            summary=summary,
-            detail=detail,
-        )
-    )
+    trace.append(ExecutionTraceItem(node=node, status=status, summary=summary, detail=detail))
     state["execution_trace"] = trace
 
 
@@ -69,11 +67,11 @@ def _build_query(request: DiagnosisRequest, task_type: str) -> str:
 
 def _build_retry_query(request: DiagnosisRequest, task_type: str) -> str:
     scene_hint = {
-        "fault_diagnosis": "振动 温升 告警 复核",
-        "process_deviation": "工艺 参数 偏差 冻结 复核",
-        "quality_inspection": "缺陷 复检 隔离 追溯",
+        "fault_diagnosis": "振动 温升 告警 复核 轴承 冷却",
+        "process_deviation": "工艺 参数 偏差 批次 冻结 复核",
+        "quality_inspection": "缺陷 复检 隔离 MRB 追溯",
     }.get(task_type, "")
-    return f"{request.fault_code} {request.symptom_text} {scene_hint}"
+    return f"{request.fault_code} {request.symptom_text} {scene_hint}".strip()
 
 
 def _merge_evidence(primary: list[EvidenceItem], secondary: list[EvidenceItem], top_k: int = 5) -> list[EvidenceItem]:
@@ -86,27 +84,39 @@ def _merge_evidence(primary: list[EvidenceItem], secondary: list[EvidenceItem], 
     return sorted(merged.values(), key=lambda item: item.score, reverse=True)[:top_k]
 
 
+def _load_agent_corpus(task_type: str) -> tuple[list[dict], int]:
+    settings = get_settings()
+    corpus_items = load_index(settings.index_manifest_path)
+    portal_repo = PortalRepository(settings.portal_db_path)
+    case_memory_items = portal_repo.list_case_memory_items(scene_type=task_type, limit=12)
+    return corpus_items + case_memory_items, len(case_memory_items)
+
+
 def _route_node(state: WorkflowState) -> WorkflowState:
-    state["task_type"] = route_request(state["request"])
+    route_decision = route_request(state["request"])
+    state["route_decision"] = route_decision
+    state["task_type"] = route_decision.scene_type
     state["retrieval_attempts"] = 0
     state["second_opinion_attempts"] = 0
     state["repair_attempts"] = 0
+    state["case_memory_count"] = 0
     _append_trace(
         state,
         node="route",
-        summary=f"请求已路由到 {state['task_type']} 场景。",
-        detail=f"fault_code={state['request'].fault_code}",
+        summary=f"请求已路由到 {route_decision.scene_type} 场景。",
+        detail=f"confidence={route_decision.confidence:.2f}; reason={route_decision.reason}",
     )
     return state
 
 
 def _retrieve_primary_node(state: WorkflowState) -> WorkflowState:
     settings = get_settings()
-    corpus_items = load_index(settings.index_manifest_path)
     scene_type = state["task_type"]
+    corpus_items, case_memory_count = _load_agent_corpus(scene_type)
     query = _build_query(state["request"], scene_type)
     state["evidence"] = search(query, corpus_items, scene_type=scene_type, top_k=5, settings=settings)
     state["retrieval_attempts"] = 1
+    state["case_memory_count"] = case_memory_count
 
     rules = load_rules(settings.materials_root / "rules" / "risk_rules.json")
     risk_level, triggered_rules = evaluate_risk_details(
@@ -123,7 +133,7 @@ def _retrieve_primary_node(state: WorkflowState) -> WorkflowState:
         state,
         node="retrieve",
         summary=f"首次召回 {len(state['evidence'])} 条证据，风险等级判定为 {risk_level}。",
-        detail=", ".join(item.rule_id for item in triggered_rules) or "no-rule-hit",
+        detail=f"case_memory={case_memory_count}; rules={','.join(item.rule_id for item in triggered_rules) or 'none'}",
         status="warning" if len(state["evidence"]) < 3 else "completed",
     )
     return state
@@ -131,16 +141,17 @@ def _retrieve_primary_node(state: WorkflowState) -> WorkflowState:
 
 def _retrieve_retry_node(state: WorkflowState) -> WorkflowState:
     settings = get_settings()
-    corpus_items = load_index(settings.index_manifest_path)
+    corpus_items, case_memory_count = _load_agent_corpus(state["task_type"])
     retry_query = _build_retry_query(state["request"], state["task_type"])
     retry_evidence = search(retry_query, corpus_items, scene_type=state["task_type"], top_k=8, settings=settings)
     state["evidence"] = _merge_evidence(state.get("evidence", []), retry_evidence, top_k=5)
     state["retrieval_attempts"] = state.get("retrieval_attempts", 1) + 1
+    state["case_memory_count"] = case_memory_count
     _append_trace(
         state,
         node="retrieve_retry",
         summary=f"低召回触发二次检索，当前保留 {len(state['evidence'])} 条证据。",
-        detail=f"retry_query={retry_query}",
+        detail=f"retry_query={retry_query}; case_memory={case_memory_count}",
         status="retry",
     )
     return state
@@ -227,7 +238,7 @@ def _second_opinion_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="second_opinion",
-        summary="低置信度触发二次校正，已融合启发式建议。",
+        summary="低置信度触发二次校正，已融合启发式修正意见。",
         detail=f"attempt={state['second_opinion_attempts']}",
         status="retry",
     )
@@ -248,7 +259,7 @@ def _draft_work_order_node(state: WorkflowState) -> WorkflowState:
         state,
         node="draft_work_order",
         summary="已生成结构化工单草案。",
-        detail=f"steps={len(work_order.step_items)}",
+        detail=f"step_items={len(work_order.step_items)}",
     )
     return state
 
@@ -279,9 +290,21 @@ def _repair_work_order_node(state: WorkflowState) -> WorkflowState:
     issue_fields = {issue.field for issue in issues}
 
     if "safety_notes" in issue_fields and not work_order.safety_notes:
-        work_order.safety_notes = ["补充安全注意事项后方可提交。"]
-    if "step_items" in issue_fields and work_order.steps and not work_order.step_items:
+        work_order.safety_notes = ["需补充现场安全隔离、挂牌和复电条件后再提交。"]
+    if "step_items" in issue_fields and not work_order.step_items:
         work_order.step_items = []
+        for index, step in enumerate(work_order.steps, start=1):
+            work_order.step_items.append(
+                WorkOrderStepItem(
+                    kind="action",
+                    title=f"补全步骤 {index}",
+                    instruction=step,
+                    priority="medium",
+                    estimated_duration_minutes=15,
+                    action_type="planned",
+                    evidence_ids=[],
+                )
+            )
 
     work_order.validation_status = "draft"
     state["work_order_draft"] = work_order
@@ -305,15 +328,19 @@ def _respond_node(state: WorkflowState) -> WorkflowState:
         provider_used=state["provider_used"],
     )
     state["approval_reasons"] = approval_reasons
+    route_decision = state["route_decision"]
 
     response = DiagnosisResponse(
         request_id=str(uuid4()),
         storage_mode="workspace-locked",
         provider_used=state["provider_used"],
-        scene_type=state["task_type"],
+        scene_type=state["task_type"],  # type: ignore[arg-type]
+        route_confidence=route_decision.confidence,
+        route_reason=route_decision.reason,
+        route_signals=route_decision.matched_signals,
         evidence=state["evidence"],
         diagnosis=state["diagnosis_result"],
-        risk_level=state["risk_level"],
+        risk_level=state["risk_level"],  # type: ignore[arg-type]
         work_order_draft=state["work_order_draft"],
         requires_human_confirmation=requires_confirmation,
         confidence=state["confidence"],
@@ -354,10 +381,7 @@ def build_workflow():
     graph.add_conditional_edges(
         "retrieve_primary",
         _should_retry_retrieval,
-        {
-            "retry": "retrieve_retry",
-            "diagnose": "diagnose",
-        },
+        {"retry": "retrieve_retry", "diagnose": "diagnose"},
     )
     graph.add_edge("retrieve_retry", "diagnose")
     graph.add_edge("diagnose", "trace")
@@ -365,20 +389,14 @@ def build_workflow():
     graph.add_conditional_edges(
         "score",
         _should_run_second_opinion,
-        {
-            "second_opinion": "second_opinion",
-            "draft": "draft",
-        },
+        {"second_opinion": "second_opinion", "draft": "draft"},
     )
     graph.add_edge("second_opinion", "trace")
     graph.add_edge("draft", "validate")
     graph.add_conditional_edges(
         "validate",
         _should_repair_work_order,
-        {
-            "repair": "repair_work_order",
-            "respond": "respond",
-        },
+        {"repair": "repair_work_order", "respond": "respond"},
     )
     graph.add_edge("repair_work_order", "validate")
     graph.add_edge("respond", END)

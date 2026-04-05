@@ -51,6 +51,8 @@ def test_workflow_retries_retrieval_when_recall_is_low(monkeypatch):
 
     assert calls["search"] == 2
     assert len(response.evidence) == 3
+    assert response.route_confidence > 0
+    assert response.route_reason
     assert any(item.node == "retrieve_retry" for item in response.execution_trace)
 
 
@@ -102,3 +104,4 @@ def test_workflow_runs_second_opinion_for_low_confidence(monkeypatch):
     assert score_calls["count"] == 2
     assert any(item.node == "second_opinion" for item in response.execution_trace)
     assert response.confidence.overall_score == 72.0
+    assert response.route_reason

@@ -37,6 +37,9 @@ export function DiagnosisPanel(props: {
   sceneType: SceneType;
   confidence?: Confidence;
   triggeredRules?: TriggeredRule[];
+  routeConfidence?: number;
+  routeReason?: string;
+  routeSignals?: string[];
 }) {
   return (
     <section style={panelStyle}>
@@ -44,6 +47,17 @@ export function DiagnosisPanel(props: {
       <p style={{ color: "#5a6d7d" }}>
         场景：{sceneLabel[props.sceneType]} | 风险等级：{props.riskLevel}
       </p>
+
+      {props.routeReason ? (
+        <section style={{ ...ruleCardStyle, marginTop: 14, background: "#f3f8fd" }}>
+          <strong>路由判断</strong>
+          <p style={{ margin: "6px 0", lineHeight: 1.7 }}>{props.routeReason}</p>
+          <span style={{ color: "#5a6d7d", fontSize: 12 }}>
+            路由置信度：{Number(props.routeConfidence ?? 0).toFixed(2)}
+            {props.routeSignals && props.routeSignals.length ? ` | 命中信号：${props.routeSignals.join(" / ")}` : ""}
+          </span>
+        </section>
+      ) : null}
 
       {props.confidence ? (
         <section style={bannerStyle(props.confidence.level)}>

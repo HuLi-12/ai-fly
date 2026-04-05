@@ -102,6 +102,23 @@ def _query_embedding_for_corpus(settings: Settings, query: str, corpus_items: li
     return (embeddings[0] if embeddings else None), backend
 
 
+def _ensure_embeddings(settings: Settings, items: list[dict]) -> list[dict]:
+    if not settings.retrieval_vector_enabled:
+        return items
+
+    missing = [(index, item) for index, item in enumerate(items) if not item.get("embedding")]
+    if not missing:
+        return items
+
+    mutable_items = [dict(item) for item in items]
+    embedding_inputs = [f"{item.get('title', '')}\n{item.get('snippet', '')}" for _, item in missing]
+    embeddings, backend = embed_texts(settings, embedding_inputs)
+    for (index, _), embedding in zip(missing, embeddings):
+        mutable_items[index]["embedding"] = embedding
+        mutable_items[index]["embedding_backend"] = backend
+    return mutable_items
+
+
 def search(
     query: str,
     corpus_items: list[dict],
@@ -111,6 +128,7 @@ def search(
 ) -> list[EvidenceItem]:
     settings = settings or get_settings()
     filtered_items = [item for item in corpus_items if item.get("scene_type") == scene_type] or corpus_items
+    filtered_items = _ensure_embeddings(settings, filtered_items)
     weights = _scene_weights(scene_type, query)
     query_embedding, query_backend = _query_embedding_for_corpus(settings, query, filtered_items)
 
@@ -122,6 +140,8 @@ def search(
         fused_score = (weights["keyword"] * keyword_score) + (weights["semantic"] * semantic_score)
         if item.get("scene_type") == scene_type:
             fused_score += 0.03
+        if item.get("source_type") == "case_memory":
+            fused_score += 0.08
         if fused_score <= 0:
             continue
 
