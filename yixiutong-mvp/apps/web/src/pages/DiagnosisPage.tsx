@@ -75,14 +75,23 @@ export function DiagnosisPage(props: Props) {
           {workspace.result ? (
             <>
               <EvidencePanel evidence={workspace.result.evidence} />
-              <DiagnosisPanel diagnosis={workspace.result.diagnosis} riskLevel={workspace.result.risk_level} sceneType={workspace.result.scene_type} />
-              <WorkOrderPreview workOrder={workspace.result.work_order_draft} />
+              <DiagnosisPanel
+                diagnosis={workspace.result.diagnosis}
+                riskLevel={workspace.result.risk_level}
+                sceneType={workspace.result.scene_type}
+                confidence={workspace.result.confidence}
+                triggeredRules={workspace.result.triggered_rules}
+              />
+              <WorkOrderPreview
+                workOrder={workspace.result.work_order_draft}
+                validationResult={workspace.result.validation_result}
+              />
             </>
           ) : (
             <section style={panelStyle}>
               <h2 style={{ marginTop: 0 }}>席位说明</h2>
               <p style={{ color: "#5a6d7d", lineHeight: 1.7 }}>
-                在这里提交异常后，系统会调用 Agent 做证据召回、结构化建议生成，并自动写入工单中心和待办审批箱。
+                在这里提交异常后，系统会调用 Agent 完成证据召回、结构化建议生成，并自动写入工单中心和待办审批箱。
               </p>
             </section>
           )}
@@ -93,7 +102,12 @@ export function DiagnosisPage(props: Props) {
 
           {workspace.result ? (
             <>
-              <AuditBanner requiresHumanConfirmation={workspace.result.requires_human_confirmation} providerUsed={workspace.result.provider_used} />
+              <AuditBanner
+                requiresHumanConfirmation={workspace.result.requires_human_confirmation}
+                providerUsed={workspace.result.provider_used}
+                confidenceScore={workspace.result.confidence?.overall_score}
+                approvalReasons={workspace.result.approval_reasons}
+              />
               <ReviewPanel
                 requestId={workspace.result.request_id}
                 workOrderId={workspace.result.work_order_id}
@@ -122,7 +136,9 @@ export function DiagnosisPage(props: Props) {
                   "审批通过后工单流转到执行状态。",
                   "最终处置结果回填后进入工单归档。"
                 ].map((item) => (
-                  <div key={item} style={infoRowStyle}>{item}</div>
+                  <div key={item} style={infoRowStyle}>
+                    {item}
+                  </div>
                 ))}
               </div>
             </section>

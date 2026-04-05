@@ -32,10 +32,16 @@ export type DiagnosisResponse = {
   provider_used: string;
   scene_type: SceneType;
   evidence: Array<{
+    evidence_id: string;
     source_type: string;
     title: string;
     snippet: string;
     score: number;
+    source_path?: string;
+    retrieval_method?: "keyword" | "semantic" | "hybrid";
+    keyword_score?: number;
+    semantic_score?: number;
+    rerank_score?: number;
   }>;
   diagnosis: {
     possible_causes: string[];
@@ -48,8 +54,66 @@ export type DiagnosisResponse = {
     steps: string[];
     risk_notice: string;
     assignee_placeholder: string;
+    scene_type?: SceneType;
+    fault_code?: string;
+    symptom_description?: string;
+    evidence_references?: string[];
+    safety_notes?: string[];
+    approval_required?: boolean;
+    validation_status?: "draft" | "ready_to_submit" | "needs_revision";
+    step_items?: Array<{
+      kind: "check" | "action";
+      title: string;
+      instruction: string;
+      priority: "high" | "medium" | "low";
+      estimated_duration_minutes: number;
+      action_type?: "immediate" | "planned" | "monitor";
+      evidence_ids: string[];
+    }>;
   };
   requires_human_confirmation: boolean;
+  confidence?: {
+    overall_score: number;
+    level: "high" | "medium" | "low";
+    components: Record<string, number>;
+    warnings: string[];
+    requires_human_review: boolean;
+  };
+  traceability?: Array<{
+    recommendation: string;
+    category: "cause" | "check" | "action";
+    support_score: number;
+    support_level: "strong" | "partial" | "weak";
+    evidence_links: Array<{
+      evidence_id: string;
+      title: string;
+      relevance_score: number;
+      source_path?: string;
+    }>;
+  }>;
+  triggered_rules?: Array<{
+    rule_id: string;
+    risk_level: "low" | "medium" | "high";
+    message: string;
+    matched_keywords: string[];
+  }>;
+  execution_trace?: Array<{
+    node: string;
+    status: "completed" | "warning" | "fallback";
+    summary: string;
+    detail: string;
+  }>;
+  validation_result?: {
+    status: "ready_to_submit" | "needs_revision";
+    requires_approval: boolean;
+    issues: Array<{
+      field: string;
+      severity: "error" | "warning";
+      message: string;
+      suggested_fix: string;
+    }>;
+  };
+  approval_reasons?: string[];
 };
 
 export type ApprovalTask = {

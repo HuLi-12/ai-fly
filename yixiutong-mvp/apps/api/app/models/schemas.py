@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 SceneType = Literal["fault_diagnosis", "process_deviation", "quality_inspection"]
+SupportLevel = Literal["strong", "partial", "weak"]
 
 
 class DiagnosisRequest(BaseModel):
@@ -17,10 +18,16 @@ class DiagnosisRequest(BaseModel):
 
 
 class EvidenceItem(BaseModel):
+    evidence_id: str = ""
     source_type: str
     title: str
     snippet: str
     score: float
+    source_path: str = ""
+    retrieval_method: Literal["keyword", "semantic", "hybrid"] = "semantic"
+    keyword_score: float = 0.0
+    semantic_score: float = 0.0
+    rerank_score: float = 0.0
 
 
 class DiagnosisResult(BaseModel):
@@ -29,11 +36,79 @@ class DiagnosisResult(BaseModel):
     recommended_actions: list[str]
 
 
+class EvidenceReference(BaseModel):
+    evidence_id: str
+    title: str
+    relevance_score: float
+    source_path: str = ""
+
+
+class TraceabilityItem(BaseModel):
+    recommendation: str
+    category: Literal["cause", "check", "action"]
+    support_score: float
+    support_level: SupportLevel
+    evidence_links: list[EvidenceReference] = Field(default_factory=list)
+
+
+class ConfidenceScore(BaseModel):
+    overall_score: float = 0.0
+    level: Literal["high", "medium", "low"] = "low"
+    components: dict[str, float] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    requires_human_review: bool = False
+
+
+class ExecutionTraceItem(BaseModel):
+    node: str
+    status: Literal["completed", "warning", "fallback", "retry"] = "completed"
+    summary: str
+    detail: str = ""
+
+
+class TriggeredRule(BaseModel):
+    rule_id: str
+    risk_level: Literal["low", "medium", "high"]
+    message: str
+    matched_keywords: list[str] = Field(default_factory=list)
+
+
+class WorkOrderStepItem(BaseModel):
+    kind: Literal["check", "action"]
+    title: str
+    instruction: str
+    priority: Literal["high", "medium", "low"] = "medium"
+    estimated_duration_minutes: int = 15
+    action_type: Literal["immediate", "planned", "monitor"] | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class ValidationIssue(BaseModel):
+    field: str
+    severity: Literal["error", "warning"] = "warning"
+    message: str
+    suggested_fix: str = ""
+
+
+class ValidationResult(BaseModel):
+    status: Literal["ready_to_submit", "needs_revision"] = "ready_to_submit"
+    requires_approval: bool = False
+    issues: list[ValidationIssue] = Field(default_factory=list)
+
+
 class WorkOrderDraft(BaseModel):
     summary: str
     steps: list[str]
     risk_notice: str
     assignee_placeholder: str = "Pending assignment"
+    scene_type: SceneType = "fault_diagnosis"
+    fault_code: str = ""
+    symptom_description: str = ""
+    evidence_references: list[str] = Field(default_factory=list)
+    step_items: list[WorkOrderStepItem] = Field(default_factory=list)
+    safety_notes: list[str] = Field(default_factory=list)
+    approval_required: bool = False
+    validation_status: Literal["draft", "ready_to_submit", "needs_revision"] = "draft"
 
 
 class DiagnosisResponse(BaseModel):
@@ -47,6 +122,12 @@ class DiagnosisResponse(BaseModel):
     risk_level: Literal["low", "medium", "high"]
     work_order_draft: WorkOrderDraft
     requires_human_confirmation: bool
+    confidence: ConfidenceScore = Field(default_factory=ConfidenceScore)
+    traceability: list[TraceabilityItem] = Field(default_factory=list)
+    triggered_rules: list[TriggeredRule] = Field(default_factory=list)
+    execution_trace: list[ExecutionTraceItem] = Field(default_factory=list)
+    validation_result: ValidationResult = Field(default_factory=ValidationResult)
+    approval_reasons: list[str] = Field(default_factory=list)
 
 
 class ConfirmRequest(BaseModel):
@@ -222,7 +303,7 @@ class NotificationChannelUpdateRequest(BaseModel):
 
 class NotificationTestRequest(BaseModel):
     title: str = "翼修通消息测试"
-    content: str = "这是来自翼修通 OA 门户的测试消息。"
+    content: str = "这是一条来自翼修通 OA 门户的测试消息。"
 
 
 class NotificationTestResponse(BaseModel):

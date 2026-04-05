@@ -35,8 +35,16 @@ def test_main_chain_returns_required_fields(monkeypatch):
     assert data["storage_mode"] == "workspace-locked"
     assert data["scene_type"] == "fault_diagnosis"
     assert len(data["evidence"]) >= 1
+    assert "evidence_id" in data["evidence"][0]
+    assert "retrieval_method" in data["evidence"][0]
     assert len(data["diagnosis"]["possible_causes"]) >= 1
     assert data["work_order_draft"]["summary"]
+    assert "confidence" in data
+    assert "traceability" in data
+    assert "triggered_rules" in data
+    assert "execution_trace" in data
+    assert "validation_result" in data
+    assert "approval_reasons" in data
     assert "requires_human_confirmation" in data
 
 
@@ -88,6 +96,7 @@ def test_confirm_and_feedback_routes(monkeypatch):
     )
     assert diagnosis_response.status_code == 200, diagnosis_response.text
     request_id = diagnosis_response.json()["request_id"]
+    assert diagnosis_response.json()["validation_result"]["status"] in {"ready_to_submit", "needs_revision"}
 
     confirm_response = client.post(
         "/api/v1/diagnosis/confirm",
