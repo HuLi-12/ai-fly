@@ -28,6 +28,18 @@ type WorkOrderDraft = {
   step_items?: StepItem[];
 };
 
+const priorityLabel = {
+  high: "高",
+  medium: "中",
+  low: "低"
+} as const;
+
+const actionTypeLabel = {
+  immediate: "立即执行",
+  planned: "计划执行",
+  monitor: "持续观察"
+} as const;
+
 export function WorkOrderPreview(props: { workOrder: WorkOrderDraft; validationResult?: ValidationResult }) {
   const stepItems = props.workOrder.step_items ?? [];
 
@@ -47,8 +59,8 @@ export function WorkOrderPreview(props: { workOrder: WorkOrderDraft; validationR
               </strong>
               <p style={{ margin: "6px 0 10px", lineHeight: 1.7 }}>{item.instruction}</p>
               <span style={metaStyle}>
-                优先级：{item.priority} / 预计耗时：{item.estimated_duration_minutes} 分钟
-                {item.action_type ? ` / 动作类型：${item.action_type}` : ""}
+                优先级：{priorityLabel[item.priority]} / 预计耗时：{item.estimated_duration_minutes} 分钟
+                {item.action_type ? ` / 动作类型：${actionTypeLabel[item.action_type]}` : ""}
               </span>
             </div>
           ))}
@@ -83,9 +95,9 @@ export function WorkOrderPreview(props: { workOrder: WorkOrderDraft; validationR
 
       {props.validationResult ? (
         <div style={validationStyle(props.validationResult.status)}>
-          <strong>校验状态：{props.validationResult.status}</strong>
+          <strong>校验状态：{props.validationResult.status === "ready_to_submit" ? "可提交" : "需修订"}</strong>
           <p style={{ margin: "8px 0 0" }}>
-            {props.validationResult.requires_approval ? "该工单要求人工审批。" : "该工单可进入提交流程。"}
+            {props.validationResult.requires_approval ? "该工单需要人工审批。" : "该工单可进入提交流程。"}
           </p>
           {props.validationResult.issues.length > 0 ? (
             <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>

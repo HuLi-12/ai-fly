@@ -4,6 +4,7 @@ import { EvidencePanel } from "../components/EvidencePanel";
 import { InputPanel } from "../components/InputPanel";
 import { ReviewPanel } from "../components/ReviewPanel";
 import { SystemStatusPanel } from "../components/SystemStatusPanel";
+import { WorkflowTracePanel } from "../components/WorkflowTracePanel";
 import { WorkOrderPreview } from "../components/WorkOrderPreview";
 import type { PortalModule, WorkspaceController } from "../hooks/useYixiutongWorkspace";
 
@@ -17,6 +18,7 @@ type Props = {
 
 export function DiagnosisPage(props: Props) {
   const { workspace } = props;
+  const guide = buildGuide(workspace);
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
@@ -62,6 +64,9 @@ export function DiagnosisPage(props: Props) {
             symptomText={workspace.symptomText}
             deviceType={workspace.deviceType}
             contextNotes={workspace.contextNotes}
+            validationErrors={workspace.validationErrors}
+            canSubmit={workspace.canSubmitDiagnosis}
+            draftAvailable={workspace.draftAvailable}
             onSceneTypeChange={workspace.applyScenePreset}
             onFaultCodeChange={workspace.setFaultCode}
             onSymptomTextChange={workspace.setSymptomText}
@@ -69,11 +74,25 @@ export function DiagnosisPage(props: Props) {
             onContextNotesChange={workspace.setContextNotes}
             onSubmit={() => void workspace.submitDiagnosis()}
             onApplyDemoPreset={() => workspace.applyScenePreset()}
+            onRestoreDraft={() => workspace.restoreDraft()}
+            onClearDraft={() => workspace.clearDraftForScene()}
             loading={workspace.diagnosisLoading}
           />
 
+          <section style={panelStyle}>
+            <h2 style={{ marginTop: 0 }}>{guide.title}</h2>
+            <div style={{ display: "grid", gap: 10 }}>
+              {guide.items.map((item) => (
+                <div key={item} style={infoRowStyle}>
+                  {item}
+                </div>
+              ))}
+            </div>
+          </section>
+
           {workspace.result ? (
             <>
+              <WorkflowTracePanel executionTrace={workspace.result.execution_trace ?? []} />
               <EvidencePanel evidence={workspace.result.evidence} />
               <DiagnosisPanel
                 diagnosis={workspace.result.diagnosis}
@@ -82,19 +101,9 @@ export function DiagnosisPage(props: Props) {
                 confidence={workspace.result.confidence}
                 triggeredRules={workspace.result.triggered_rules}
               />
-              <WorkOrderPreview
-                workOrder={workspace.result.work_order_draft}
-                validationResult={workspace.result.validation_result}
-              />
+              <WorkOrderPreview workOrder={workspace.result.work_order_draft} validationResult={workspace.result.validation_result} />
             </>
-          ) : (
-            <section style={panelStyle}>
-              <h2 style={{ marginTop: 0 }}>席位说明</h2>
-              <p style={{ color: "#5a6d7d", lineHeight: 1.7 }}>
-                在这里提交异常后，系统会调用 Agent 完成证据召回、结构化建议生成，并自动写入工单中心和待办审批箱。
-              </p>
-            </section>
-          )}
+          ) : null}
         </div>
 
         <div style={{ display: "grid", gap: 20, alignContent: "start" }}>
@@ -128,13 +137,13 @@ export function DiagnosisPage(props: Props) {
             </>
           ) : (
             <section style={panelStyle}>
-              <h2 style={{ marginTop: 0 }}>流程说明</h2>
+              <h2 style={{ marginTop: 0 }}>使用建议</h2>
               <div style={{ display: "grid", gap: 10 }}>
                 {[
-                  "提交异常后自动生成工单。",
-                  "高风险结果自动进入待办审批箱。",
-                  "审批通过后工单流转到执行状态。",
-                  "最终处置结果回填后进入工单归档。"
+                  "先确认业务场景，再填写标准编号和异常现象。",
+                  "如果本场景有历史草稿，可先恢复后再继续补充。",
+                  "提交后系统会自动联动检索、诊断、工单和审批流程。",
+                  "高风险结果会自动进入审批闸门，不能直接放行。"
                 ].map((item) => (
                   <div key={item} style={infoRowStyle}>
                     {item}
@@ -149,6 +158,31 @@ export function DiagnosisPage(props: Props) {
   );
 }
 
+function buildGuide(workspace: WorkspaceController) {
+  if (workspace.diagnosisLoading) {
+    return {
+      title: "分析中",
+      items: ["系统正在执行路由、检索、诊断和工单起草。", "请等待结果返回，不建议重复点击提交按钮。"]
+    };
+  }
+  if (workspace.result) {
+    return {
+      title: "下一步建议",
+      items: workspace.result.requires_human_confirmation
+        ? ["当前结果需要人工审批，请在右侧审批闭环中确认或驳回。", "如需修订动作，可直接编辑后提交审批意见。"]
+        : ["当前结果可直接进入执行与反馈环节。", "如现场有补充信息，建议同步回填到反馈闭环。"]
+    };
+  }
+  return {
+    title: "流程说明",
+    items: [
+      "填写故障码、设备对象和异常现象，必要时补充班次与批次信息。",
+      "Agent 会自动执行检索、诊断、追溯、评分和工单生成。",
+      "结果会根据风险等级和置信度自动决定是否进入审批。"
+    ]
+  };
+}
+
 const panelStyle = {
   background: "rgba(255,255,255,0.92)",
   border: "1px solid rgba(9,52,84,0.1)",
@@ -161,5 +195,6 @@ const infoRowStyle = {
   padding: 14,
   borderRadius: 16,
   background: "#f7fafc",
-  border: "1px solid rgba(9,52,84,0.08)"
+  border: "1px solid rgba(9,52,84,0.08)",
+  lineHeight: 1.7
 } as const;

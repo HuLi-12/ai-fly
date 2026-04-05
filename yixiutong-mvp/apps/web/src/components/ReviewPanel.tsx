@@ -46,9 +46,14 @@ export function ReviewPanel(props: Props) {
   return (
     <section style={{ background: "#fff", borderRadius: 22, padding: 20, border: "1px solid rgba(12, 52, 83, 0.12)" }}>
       <h2 style={{ marginTop: 0 }}>审批与反馈闭环</h2>
-      <p style={{ marginTop: 0 }}>
+      <p style={{ lineHeight: 1.7 }}>
         请求号：<code>{props.requestId}</code>
-        {props.workOrderId ? <> | 工单号：<code>{props.workOrderId}</code></> : null}
+        {props.workOrderId ? (
+          <>
+            {" "}
+            | 工单号：<code>{props.workOrderId}</code>
+          </>
+        ) : null}
       </p>
 
       <div style={{ display: "grid", gap: 12 }}>
@@ -64,10 +69,20 @@ export function ReviewPanel(props: Props) {
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 16 }}>
-        <button type="button" disabled={props.confirmLoading} onClick={() => props.onConfirm({ approved: true, editedActions: parseActions(editedActionsText), operatorNote })} style={approveButtonStyle}>
+        <button
+          type="button"
+          disabled={props.confirmLoading}
+          onClick={() => props.onConfirm({ approved: true, editedActions: parseActions(editedActionsText), operatorNote })}
+          style={approveButtonStyle}
+        >
           {props.confirmLoading ? "提交中..." : "通过审批"}
         </button>
-        <button type="button" disabled={props.confirmLoading} onClick={() => props.onConfirm({ approved: false, editedActions: parseActions(editedActionsText), operatorNote })} style={rejectButtonStyle}>
+        <button
+          type="button"
+          disabled={props.confirmLoading}
+          onClick={() => props.onConfirm({ approved: false, editedActions: parseActions(editedActionsText), operatorNote })}
+          style={rejectButtonStyle}
+        >
           {props.confirmLoading ? "提交中..." : "驳回重审"}
         </button>
       </div>
@@ -88,12 +103,24 @@ export function ReviewPanel(props: Props) {
 
         <label>
           <div style={{ marginBottom: 6 }}>反馈说明</div>
-          <textarea rows={3} value={feedbackText} onChange={(event) => setFeedbackText(event.target.value)} placeholder="记录建议是否可用、是否缺少关键步骤、现场是否安全" style={fieldStyle} />
+          <textarea
+            rows={3}
+            value={feedbackText}
+            onChange={(event) => setFeedbackText(event.target.value)}
+            placeholder="记录建议是否可用、是否缺少关键步骤、现场是否安全。"
+            style={fieldStyle}
+          />
         </label>
 
         <label>
           <div style={{ marginBottom: 6 }}>最终处置结果</div>
-          <textarea rows={3} value={finalResolution} onChange={(event) => setFinalResolution(event.target.value)} placeholder="记录最终检修、返工、让步放行或隔离结果" style={fieldStyle} />
+          <textarea
+            rows={3}
+            value={finalResolution}
+            onChange={(event) => setFinalResolution(event.target.value)}
+            placeholder="记录最终检修、返工、让步放行或隔离结果。"
+            style={fieldStyle}
+          />
         </label>
       </div>
 

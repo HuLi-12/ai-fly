@@ -15,7 +15,7 @@ def _request() -> DiagnosisRequest:
 def test_workflow_retries_retrieval_when_recall_is_low(monkeypatch):
     calls = {"search": 0}
 
-    def fake_search(query, corpus_items, scene_type, top_k=5):
+    def fake_search(query, corpus_items, scene_type, top_k=5, settings=None):
         calls["search"] += 1
         if calls["search"] == 1:
             return [
@@ -57,7 +57,7 @@ def test_workflow_retries_retrieval_when_recall_is_low(monkeypatch):
 def test_workflow_runs_second_opinion_for_low_confidence(monkeypatch):
     score_calls = {"count": 0}
 
-    def fake_search(query, corpus_items, scene_type, top_k=5):
+    def fake_search(query, corpus_items, scene_type, top_k=5, settings=None):
         return [
             EvidenceItem(evidence_id="doc-1", source_type="manual", title="E-204 手册", snippet="检查轴承与冷却回路。", score=0.82),
             EvidenceItem(evidence_id="doc-2", source_type="case", title="振动案例", snippet="联轴器偏移会导致振动。", score=0.77),

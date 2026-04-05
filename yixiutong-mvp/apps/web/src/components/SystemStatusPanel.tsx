@@ -9,7 +9,7 @@ export function SystemStatusPanel(props: { selfCheck: SelfCheckResponse | null; 
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
         <div>
           <h2 style={{ marginTop: 0, marginBottom: 8 }}>系统状态</h2>
-          <p style={subTextStyle}>保留部署真正需要关注的主通道、兜底通道和本地模型状态，不再在页面展示磁盘守卫细节。</p>
+          <p style={subTextStyle}>这里只展示部署与运行真正需要关注的主通道、兜底通道和检索状态。</p>
         </div>
       </div>
 
@@ -26,7 +26,7 @@ export function SystemStatusPanel(props: { selfCheck: SelfCheckResponse | null; 
         />
         <StatusCard
           title="本地兜底通道"
-          value={fallback?.reachable ? props.selfCheck?.fallback_provider ?? "在线" : "待检查"}
+          value={fallback?.configured ? props.selfCheck?.fallback_provider ?? "已配置" : "未配置"}
           tone={fallback?.reachable ? "ok" : "warn"}
           rows={[
             `可达性：${fallback?.reachable ? "在线" : "未就绪"}`,
@@ -36,12 +36,22 @@ export function SystemStatusPanel(props: { selfCheck: SelfCheckResponse | null; 
         />
         <StatusCard
           title="本地模型"
-          value={props.selfCheck?.local_model_present ? "已落位" : "未检测"}
+          value={props.selfCheck?.local_model_present ? "已识别" : "未识别"}
           tone={props.selfCheck?.local_model_present ? "ok" : "warn"}
           rows={[
             `本地模型启用：${props.selfCheck?.local_model_enabled ? "是" : "否"}`,
             `Ollama 可执行文件：${props.selfCheck?.ollama_executable_present ? "已识别" : "未识别"}`,
             `路径：${props.selfCheck?.ollama_executable_path || "未记录"}`
+          ]}
+        />
+        <StatusCard
+          title="检索后端"
+          value={props.selfCheck?.retrieval_vector_enabled ? "向量检索已启用" : "仅关键词模式"}
+          tone={props.selfCheck?.retrieval_vector_enabled ? "ok" : "warn"}
+          rows={[
+            `Embedding Provider：${props.selfCheck?.retrieval_embedding_provider || "未配置"}`,
+            `Embedding Model：${props.selfCheck?.retrieval_embedding_model || "未配置"}`,
+            `模型复排：${props.selfCheck?.retrieval_model_rerank_enabled ? "已启用" : "未启用"}`
           ]}
         />
       </div>

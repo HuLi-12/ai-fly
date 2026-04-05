@@ -5,10 +5,12 @@ type EvidenceItem = {
   snippet: string;
   score: number;
   source_path?: string;
+  retrieval_backend?: string;
   retrieval_method?: "keyword" | "semantic" | "hybrid";
   keyword_score?: number;
   semantic_score?: number;
   rerank_score?: number;
+  model_rerank_score?: number;
 };
 
 export function EvidencePanel(props: { evidence: EvidenceItem[] }) {
@@ -28,8 +30,14 @@ export function EvidencePanel(props: { evidence: EvidenceItem[] }) {
             <div style={metaRowStyle}>
               <span>关键词 {Number(item.keyword_score ?? 0).toFixed(2)}</span>
               <span>语义 {Number(item.semantic_score ?? 0).toFixed(2)}</span>
-              <span>重排 {Number(item.rerank_score ?? 0).toFixed(2)}</span>
+              <span>复排 {Number(item.rerank_score ?? 0).toFixed(2)}</span>
+              <span>模型复排 {Number(item.model_rerank_score ?? 0).toFixed(2)}</span>
             </div>
+            {item.retrieval_backend ? (
+              <p style={{ marginBottom: 0, marginTop: 10, color: "#6a7f90", fontSize: 12, wordBreak: "break-all" }}>
+                检索后端：{item.retrieval_backend}
+              </p>
+            ) : null}
             {item.source_path ? (
               <p style={{ marginBottom: 0, marginTop: 10, color: "#6a7f90", fontSize: 12, wordBreak: "break-all" }}>
                 来源路径：{item.source_path}

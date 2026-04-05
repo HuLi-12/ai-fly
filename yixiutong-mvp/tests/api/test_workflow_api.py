@@ -70,6 +70,8 @@ def test_process_scene_and_system_routes(monkeypatch):
     system_response = client.get("/api/v1/system/self-check")
     assert system_response.status_code == 200
     assert "fallback_provider" in system_response.json()
+    assert "retrieval_embedding_provider" in system_response.json()
+    assert "retrieval_vector_enabled" in system_response.json()
     assert "ollama_executable_present" in system_response.json()
     assert "primary_base_url" in system_response.json()
 

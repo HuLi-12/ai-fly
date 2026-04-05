@@ -38,10 +38,12 @@ export type DiagnosisResponse = {
     snippet: string;
     score: number;
     source_path?: string;
+    retrieval_backend?: string;
     retrieval_method?: "keyword" | "semantic" | "hybrid";
     keyword_score?: number;
     semantic_score?: number;
     rerank_score?: number;
+    model_rerank_score?: number;
   }>;
   diagnosis: {
     possible_causes: string[];
@@ -99,7 +101,7 @@ export type DiagnosisResponse = {
   }>;
   execution_trace?: Array<{
     node: string;
-    status: "completed" | "warning" | "fallback";
+    status: "completed" | "warning" | "fallback" | "retry";
     summary: string;
     detail: string;
   }>;
@@ -181,6 +183,10 @@ export type PortalOverviewResponse = {
 export type SelfCheckResponse = {
   provider: string;
   fallback_provider: string;
+  retrieval_embedding_provider: string;
+  retrieval_embedding_model: string;
+  retrieval_vector_enabled: boolean;
+  retrieval_model_rerank_enabled: boolean;
   primary_base_url: string;
   fallback_base_url: string;
   cache_root: string;

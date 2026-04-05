@@ -24,10 +24,12 @@ class EvidenceItem(BaseModel):
     snippet: str
     score: float
     source_path: str = ""
+    retrieval_backend: str = ""
     retrieval_method: Literal["keyword", "semantic", "hybrid"] = "semantic"
     keyword_score: float = 0.0
     semantic_score: float = 0.0
     rerank_score: float = 0.0
+    model_rerank_score: float = 0.0
 
 
 class DiagnosisResult(BaseModel):
@@ -158,6 +160,10 @@ class SystemSelfCheck(BaseModel):
     current_project_size_mb: float
     provider: str
     fallback_provider: str
+    retrieval_embedding_provider: str = ""
+    retrieval_embedding_model: str = ""
+    retrieval_vector_enabled: bool = False
+    retrieval_model_rerank_enabled: bool = False
     primary_base_url: str
     fallback_base_url: str
     cache_root: str

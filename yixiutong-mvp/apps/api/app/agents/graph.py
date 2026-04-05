@@ -105,7 +105,7 @@ def _retrieve_primary_node(state: WorkflowState) -> WorkflowState:
     corpus_items = load_index(settings.index_manifest_path)
     scene_type = state["task_type"]
     query = _build_query(state["request"], scene_type)
-    state["evidence"] = search(query, corpus_items, scene_type=scene_type, top_k=5)
+    state["evidence"] = search(query, corpus_items, scene_type=scene_type, top_k=5, settings=settings)
     state["retrieval_attempts"] = 1
 
     rules = load_rules(settings.materials_root / "rules" / "risk_rules.json")
@@ -133,7 +133,7 @@ def _retrieve_retry_node(state: WorkflowState) -> WorkflowState:
     settings = get_settings()
     corpus_items = load_index(settings.index_manifest_path)
     retry_query = _build_retry_query(state["request"], state["task_type"])
-    retry_evidence = search(retry_query, corpus_items, scene_type=state["task_type"], top_k=8)
+    retry_evidence = search(retry_query, corpus_items, scene_type=state["task_type"], top_k=8, settings=settings)
     state["evidence"] = _merge_evidence(state.get("evidence", []), retry_evidence, top_k=5)
     state["retrieval_attempts"] = state.get("retrieval_attempts", 1) + 1
     _append_trace(

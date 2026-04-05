@@ -30,7 +30,7 @@ export function AuditBanner(props: {
       ) : null}
       {props.providerUsed === "heuristic_fallback" ? (
         <p style={{ marginBottom: 0 }}>
-          当前结果由本地启发式兜底生成，正式演示时建议优先使用本地模型或已配置的主通道。
+          当前结果由启发式兜底链路生成，正式使用时建议优先启用本地模型或已配置的主通道。
         </p>
       ) : null}
     </section>

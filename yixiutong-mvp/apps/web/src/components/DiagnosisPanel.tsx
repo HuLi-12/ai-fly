@@ -25,6 +25,12 @@ const sceneLabel: Record<SceneType, string> = {
   quality_inspection: "质量处置"
 };
 
+const confidenceLabel = {
+  high: "高",
+  medium: "中",
+  low: "低"
+} as const;
+
 export function DiagnosisPanel(props: {
   diagnosis: Diagnosis;
   riskLevel: string;
@@ -42,7 +48,7 @@ export function DiagnosisPanel(props: {
       {props.confidence ? (
         <section style={bannerStyle(props.confidence.level)}>
           <strong>置信度 {props.confidence.overall_score.toFixed(1)}</strong>
-          <span style={{ marginLeft: 10 }}>等级：{props.confidence.level}</span>
+          <span style={{ marginLeft: 10 }}>等级：{confidenceLabel[props.confidence.level]}</span>
           {props.confidence.warnings.length > 0 ? (
             <ul style={{ margin: "10px 0 0", paddingLeft: 20 }}>
               {props.confidence.warnings.map((warning) => (

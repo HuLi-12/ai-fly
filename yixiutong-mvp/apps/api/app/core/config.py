@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     free_space_floor_gb: int = Field(default=10)
     safe_operation_floor_gb: int = Field(default=12)
     llm_timeout_seconds: int = Field(default=180)
+    retrieval_vector_enabled: bool = Field(default=True)
+    retrieval_embedding_provider: str = Field(default="hashing")
+    retrieval_embedding_model: str = Field(default="")
+    retrieval_embedding_base_url: str = Field(default="")
+    retrieval_embedding_api_key: str = Field(default="")
+    retrieval_embedding_timeout_seconds: int = Field(default=60)
+    retrieval_enable_model_rerank: bool = Field(default=True)
+    retrieval_rerank_candidate_count: int = Field(default=6)
     primary_llm_provider: str = Field(default="openai_compatible")
     primary_llm_model: str = Field(default="qwen2.5-7b-instruct")
     primary_llm_base_url: str = Field(default="")
@@ -200,6 +208,15 @@ class Settings(BaseSettings):
                 "timeout_seconds": str(self.llm_timeout_seconds),
             }
         raise RuntimeError(f"Unsupported provider channel: {channel}")
+
+    def retrieval_embedding_config(self) -> dict[str, str]:
+        return {
+            "provider": self.retrieval_embedding_provider,
+            "model": self.retrieval_embedding_model,
+            "base_url": self.retrieval_embedding_base_url,
+            "api_key": self.retrieval_embedding_api_key,
+            "timeout_seconds": str(self.retrieval_embedding_timeout_seconds),
+        }
 
 
 @lru_cache(maxsize=1)

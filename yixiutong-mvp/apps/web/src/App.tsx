@@ -125,11 +125,9 @@ export default function App() {
             <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 2, opacity: 0.68 }}>航空业务门户</div>
             <h1 style={{ marginBottom: 8 }}>翼修通</h1>
             <p style={{ margin: 0, color: "rgba(255,255,255,0.74)", lineHeight: 1.7 }}>
-              {workspace.user.display_name} · {workspace.user.role_label}
+              {workspace.user.display_name} / {workspace.user.role_label}
             </p>
-            <p style={{ marginTop: 6, marginBottom: 0, color: "rgba(255,255,255,0.62)", lineHeight: 1.6 }}>
-              {workspace.user.department}
-            </p>
+            <p style={{ marginTop: 6, marginBottom: 0, color: "rgba(255,255,255,0.62)", lineHeight: 1.6 }}>{workspace.user.department}</p>
           </div>
 
           <nav style={{ display: "grid", gap: 10, marginTop: 18 }}>
@@ -201,9 +199,33 @@ export default function App() {
           {workspace.successMessage ? <MessageBanner tone="success" text={workspace.successMessage} /> : null}
 
           {moduleKey === "dashboard" ? <DashboardPage overview={workspace.overview} onOpenModule={navigate} onOpenWorkOrder={workspace.openWorkOrder} /> : null}
-          {moduleKey === "fault" ? <DiagnosisPage title="智能排故席位" description="面向设备告警、维修排查与人工复核的协同业务席位。" moduleTone={moduleTone.fault} workspace={workspace} onOpenModule={navigate} /> : null}
-          {moduleKey === "process" ? <DiagnosisPage title="工艺偏差席位" description="面向工艺参数偏移、批次冻结与工艺签审的协同席位。" moduleTone={moduleTone.process} workspace={workspace} onOpenModule={navigate} /> : null}
-          {moduleKey === "quality" ? <DiagnosisPage title="质量处置席位" description="面向终检异常、隔离处置和 MRB 升级的协同席位。" moduleTone={moduleTone.quality} workspace={workspace} onOpenModule={navigate} /> : null}
+          {moduleKey === "fault" ? (
+            <DiagnosisPage
+              title="智能排故席位"
+              description="面向设备告警、维修排查与人工复核的协同业务席位。"
+              moduleTone={moduleTone.fault}
+              workspace={workspace}
+              onOpenModule={navigate}
+            />
+          ) : null}
+          {moduleKey === "process" ? (
+            <DiagnosisPage
+              title="工艺偏差席位"
+              description="面向工艺参数偏移、批次冻结与工艺签审的协同席位。"
+              moduleTone={moduleTone.process}
+              workspace={workspace}
+              onOpenModule={navigate}
+            />
+          ) : null}
+          {moduleKey === "quality" ? (
+            <DiagnosisPage
+              title="质量处置席位"
+              description="面向终检异常、隔离处置和 MRB 升级的协同席位。"
+              moduleTone={moduleTone.quality}
+              workspace={workspace}
+              onOpenModule={navigate}
+            />
+          ) : null}
           {moduleKey === "approvals" ? <ApprovalsPage workspace={workspace} /> : null}
           {moduleKey === "work_orders" ? <WorkOrdersPage workspace={workspace} /> : null}
           {moduleKey === "knowledge" ? <KnowledgeCenterPage workspace={workspace} /> : null}
