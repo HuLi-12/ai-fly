@@ -35,6 +35,7 @@ class OllamaProvider:
                 "options": resolved_options,
             },
             timeout=float(self.config["timeout_seconds"]),
+            trust_env=False,
         )
         response.raise_for_status()
         data = response.json()

@@ -129,6 +129,7 @@ def check_provider_channel(settings: Settings, channel: str) -> ProviderCheck:
             response = httpx.get(
                 f"{config['base_url'].rstrip('/')}/api/tags",
                 timeout=float(config["timeout_seconds"]),
+                trust_env=False,
             )
         else:
             return ProviderCheck(channel=channel, provider=provider, configured=True, reachable=False, detail="unsupported provider")

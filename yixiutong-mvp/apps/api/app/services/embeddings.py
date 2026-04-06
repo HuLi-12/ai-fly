@@ -80,6 +80,7 @@ def _embed_with_ollama(config: dict[str, str], texts: list[str]) -> list[list[fl
             "truncate": True,
         },
         timeout=float(config["timeout_seconds"]),
+        trust_env=False,
     )
     response.raise_for_status()
     data = response.json()
