@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
@@ -49,6 +51,44 @@ def test_main_chain_returns_required_fields(monkeypatch):
     assert "validation_result" in data
     assert "approval_reasons" in data
     assert "requires_human_confirmation" in data
+
+
+def test_live_session_exposes_agent_progress(monkeypatch):
+    _use_fast_test_runtime(monkeypatch)
+    settings = get_settings()
+    build_index(settings.materials_root, settings.index_manifest_path)
+    client = TestClient(create_app())
+
+    start_response = client.post(
+        "/api/v1/diagnosis/start-live",
+        json={
+            "fault_code": "E-204",
+            "symptom_text": "Equipment vibration is abnormal and temperature rises during operation.",
+            "device_type": "Aviation assembly station",
+            "context_notes": "Night shift run for 6 hours before alarm escalation.",
+            "scene_type": "fault_diagnosis",
+        },
+    )
+    assert start_response.status_code == 200, start_response.text
+    session_id = start_response.json()["session_id"]
+
+    session_payload = None
+    for _ in range(20):
+        poll_response = client.get(f"/api/v1/diagnosis/sessions/{session_id}")
+        assert poll_response.status_code == 200, poll_response.text
+        session_payload = poll_response.json()
+        if session_payload["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert session_payload is not None
+    assert session_payload["status"] == "completed"
+    assert session_payload["current_agent"]
+    assert len(session_payload["progress"]) >= 1
+    assert any(item["agent"] for item in session_payload["progress"])
+    assert all(item["status"] != "pending" for item in session_payload["progress"])
+    assert any(item["status"] == "skipped" for item in session_payload["progress"])
+    assert session_payload["response"]["request_id"]
 
 
 def test_process_scene_and_system_routes(monkeypatch):

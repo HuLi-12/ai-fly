@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
 SceneType = Literal["fault_diagnosis", "process_deviation", "quality_inspection"]
 SupportLevel = Literal["strong", "partial", "weak"]
+ProgressStatus = Literal["pending", "running", "completed", "warning", "fallback", "retry", "skipped", "failed"]
 
 
 class DiagnosisRequest(BaseModel):
@@ -73,6 +74,17 @@ class ExecutionTraceItem(BaseModel):
     status: Literal["completed", "warning", "fallback", "retry"] = "completed"
     summary: str
     detail: str = ""
+    agent: str = ""
+
+
+class AgentProgressItem(BaseModel):
+    node: str
+    label: str
+    agent: str
+    status: ProgressStatus = "pending"
+    summary: str = ""
+    detail: str = ""
+    updated_at: str = ""
 
 
 class TriggeredRule(BaseModel):
@@ -121,6 +133,7 @@ class WorkOrderDraft(BaseModel):
 
 
 class DiagnosisResponse(BaseModel):
+    run_id: str = ""
     request_id: str
     work_order_id: str = ""
     storage_mode: Literal["workspace-locked"]
@@ -140,6 +153,25 @@ class DiagnosisResponse(BaseModel):
     execution_trace: list[ExecutionTraceItem] = Field(default_factory=list)
     validation_result: ValidationResult = Field(default_factory=ValidationResult)
     approval_reasons: list[str] = Field(default_factory=list)
+
+
+class DiagnosisSessionStartResponse(BaseModel):
+    run_id: str = ""
+    session_id: str
+    status: Literal["queued", "running", "completed", "failed"] = "queued"
+
+
+class DiagnosisSessionState(BaseModel):
+    run_id: str = ""
+    session_id: str
+    status: Literal["queued", "running", "completed", "failed"] = "queued"
+    current_node: str = ""
+    current_agent: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    error_message: str = ""
+    progress: list[AgentProgressItem] = Field(default_factory=list)
+    response: DiagnosisResponse | None = None
 
 
 class ConfirmRequest(BaseModel):
@@ -192,6 +224,51 @@ class ProviderCheck(BaseModel):
     detail: str
 
 
+class AgentRunSnapshot(BaseModel):
+    seq: int
+    node: str
+    status: str
+    summary: str
+    detail: str = ""
+    created_at: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRunReplayResponse(BaseModel):
+    run_id: str
+    session_id: str = ""
+    request_id: str = ""
+    request_hash: str
+    idempotency_key: str = ""
+    status: str
+    scene_type: str = ""
+    user_id: str = ""
+    provider_used: str = ""
+    started_at: str
+    finished_at: str = ""
+    total_duration_ms: float = 0.0
+    request: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+    error_message: str = ""
+    snapshots: list[AgentRunSnapshot] = Field(default_factory=list)
+
+
+class AgentMetricNodeSummary(BaseModel):
+    node: str
+    count: int
+    avg_duration_ms: float
+    max_duration_ms: float
+
+
+class AgentMetricsResponse(BaseModel):
+    total_runs: int
+    completed_runs: int
+    failed_runs: int
+    cached_hits: int
+    avg_run_duration_ms: float
+    node_summaries: list[AgentMetricNodeSummary] = Field(default_factory=list)
+
+
 class UserProfile(BaseModel):
     user_id: str
     username: str
@@ -223,11 +300,28 @@ class PortalSummary(BaseModel):
     rework_count: int
 
 
+class LatestTodoItem(BaseModel):
+    todo_id: str
+    work_order_id: str
+    task_type: Literal["approval", "execution", "in_progress", "tracking"]
+    title: str
+    scene_type: SceneType
+    scene_label: str
+    status_label: str
+    priority: str
+    summary: str
+    assignee_name: str
+    action_label: str
+    target_module: Literal["approvals", "work_orders"]
+    updated_at: str
+
+
 class PortalOverviewResponse(BaseModel):
     profile: UserProfile
     summary: PortalSummary
     approvals: list["ApprovalTask"]
     work_orders: list["WorkOrderListItem"]
+    latest_todos: list["LatestTodoItem"]
 
 
 class ApprovalTask(BaseModel):

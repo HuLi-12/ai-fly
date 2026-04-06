@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TypedDict
+import time
+from typing import Any, Callable, TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -25,7 +26,10 @@ from app.models.schemas import (
 )
 from app.repositories.corpus import load_index
 from app.repositories.portal import PortalRepository
+from app.services.agent_observability import log_agent_event
+from app.services.agent_runtime import state_excerpt
 from app.services.confidence import compute_confidence
+from app.services.diagnosis_sessions import get_node_meta
 from app.services.retrieval import search
 from app.services.rules import evaluate_risk_details, load_rules
 from app.services.traceability import build_traceability
@@ -34,6 +38,11 @@ from app.services.work_orders import build_work_order_draft, validate_work_order
 
 class WorkflowState(TypedDict, total=False):
     request: DiagnosisRequest
+    run_id: str
+    deadline_epoch: float
+    snapshot_callback: object
+    metric_callback: object
+    progress_callback: object
     route_decision: RouteDecision
     task_type: str
     evidence: list[EvidenceItem]
@@ -55,10 +64,120 @@ class WorkflowState(TypedDict, total=False):
     case_memory_count: int
 
 
+DEADLINE_GUARDED_NODES = {"diagnose"}
+
+
+def _emit_progress(state: WorkflowState, node: str, status: str, summary: str, detail: str = "") -> None:
+    callback = state.get("progress_callback")
+    label, agent = get_node_meta(node)
+    if callable(callback):
+        callback(
+            {
+                "node": node,
+                "label": label,
+                "agent": agent,
+                "status": status,
+                "summary": summary,
+                "detail": detail,
+            }
+        )
+
+
+def _record_snapshot(state: WorkflowState, node: str, status: str, summary: str, detail: str = "") -> None:
+    callback = state.get("snapshot_callback")
+    if callable(callback):
+        callback(
+            {
+                "node": node,
+                "status": status,
+                "summary": summary,
+                "detail": detail,
+                "payload": state_excerpt(state),
+            }
+        )
+
+
+def _record_metric(state: WorkflowState, node: str, metric_name: str, metric_value: float, tags: dict[str, Any] | None = None) -> None:
+    callback = state.get("metric_callback")
+    if callable(callback):
+        callback(node, metric_name, float(metric_value), tags or {})
+
+
+def _ensure_before_deadline(state: WorkflowState, node: str) -> None:
+    deadline = state.get("deadline_epoch")
+    if deadline is None:
+        return
+    if node not in DEADLINE_GUARDED_NODES:
+        return
+    if time.perf_counter() > deadline:
+        raise TimeoutError(f"Workflow deadline exceeded before node '{node}'.")
+
+
 def _append_trace(state: WorkflowState, node: str, summary: str, detail: str = "", status: str = "completed") -> None:
+    label, agent = get_node_meta(node)
     trace = list(state.get("execution_trace", []))
-    trace.append(ExecutionTraceItem(node=node, status=status, summary=summary, detail=detail))
+    trace.append(ExecutionTraceItem(node=node, status=status, summary=summary, detail=detail, agent=agent))
     state["execution_trace"] = trace
+    _emit_progress(state, node=node, status=status, summary=summary, detail=detail)
+    _record_snapshot(state, node=node, status=status, summary=summary, detail=detail)
+    log_agent_event(
+        "agent_node_finished",
+        {
+            "run_id": state.get("run_id", ""),
+            "node": node,
+            "status": status,
+            "summary": summary,
+            "detail": detail,
+        },
+    )
+
+
+def _mark_skipped(state: WorkflowState, node: str, summary: str, detail: str = "") -> None:
+    _emit_progress(state, node=node, status="skipped", summary=summary, detail=detail)
+    _record_snapshot(state, node=node, status="skipped", summary=summary, detail=detail)
+    log_agent_event(
+        "agent_node_skipped",
+        {
+            "run_id": state.get("run_id", ""),
+            "node": node,
+            "summary": summary,
+            "detail": detail,
+        },
+    )
+
+
+def _with_node_runtime(node: str, summary: str, handler: Callable[[WorkflowState], WorkflowState]) -> Callable[[WorkflowState], WorkflowState]:
+    def _wrapped(state: WorkflowState) -> WorkflowState:
+        _ensure_before_deadline(state, node)
+        started = time.perf_counter()
+        _emit_progress(state, node=node, status="running", summary=summary)
+        _record_snapshot(state, node=node, status="running", summary=summary)
+        log_agent_event(
+            "agent_node_started",
+            {"run_id": state.get("run_id", ""), "node": node, "summary": summary},
+        )
+        try:
+            next_state = handler(state)
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            _record_metric(state, node, "node_duration_ms", duration_ms, {"outcome": "failed"})
+            _emit_progress(state, node=node, status="failed", summary=f"{summary} failed", detail=str(exc))
+            _record_snapshot(state, node=node, status="failed", summary=f"{summary} failed", detail=str(exc))
+            log_agent_event(
+                "agent_node_failed",
+                {
+                    "run_id": state.get("run_id", ""),
+                    "node": node,
+                    "duration_ms": duration_ms,
+                    "error": str(exc),
+                },
+            )
+            raise
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        _record_metric(state, node, "node_duration_ms", duration_ms, {"outcome": "ok"})
+        return next_state
+
+    return _wrapped
 
 
 def _build_query(request: DiagnosisRequest, task_type: str) -> str:
@@ -67,9 +186,9 @@ def _build_query(request: DiagnosisRequest, task_type: str) -> str:
 
 def _build_retry_query(request: DiagnosisRequest, task_type: str) -> str:
     scene_hint = {
-        "fault_diagnosis": "振动 温升 告警 复核 轴承 冷却",
-        "process_deviation": "工艺 参数 偏差 批次 冻结 复核",
-        "quality_inspection": "缺陷 复检 隔离 MRB 追溯",
+        "fault_diagnosis": "vibration temperature alarm bearing cooling manual case",
+        "process_deviation": "process deviation parameter batch freeze review",
+        "quality_inspection": "inspection defect quarantine mrb traceability",
     }.get(task_type, "")
     return f"{request.fault_code} {request.symptom_text} {scene_hint}".strip()
 
@@ -103,7 +222,7 @@ def _route_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="route",
-        summary=f"请求已路由到 {route_decision.scene_type} 场景。",
+        summary=f"Request routed to {route_decision.scene_type}.",
         detail=f"confidence={route_decision.confidence:.2f}; reason={route_decision.reason}",
     )
     return state
@@ -131,9 +250,9 @@ def _retrieve_primary_node(state: WorkflowState) -> WorkflowState:
     state["risk_matches"] = [item.message for item in triggered_rules]
     _append_trace(
         state,
-        node="retrieve",
-        summary=f"首次召回 {len(state['evidence'])} 条证据，风险等级判定为 {risk_level}。",
-        detail=f"case_memory={case_memory_count}; rules={','.join(item.rule_id for item in triggered_rules) or 'none'}",
+        node="retrieve_primary",
+        summary=f"Primary retrieval returned {len(state['evidence'])} evidence items.",
+        detail=f"risk={risk_level}; case_memory={case_memory_count}; rules={','.join(item.rule_id for item in triggered_rules) or 'none'}",
         status="warning" if len(state["evidence"]) < 3 else "completed",
     )
     return state
@@ -150,7 +269,7 @@ def _retrieve_retry_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="retrieve_retry",
-        summary=f"低召回触发二次检索，当前保留 {len(state['evidence'])} 条证据。",
+        summary=f"Secondary retrieval retained {len(state['evidence'])} evidence items.",
         detail=f"retry_query={retry_query}; case_memory={case_memory_count}",
         status="retry",
     )
@@ -160,6 +279,12 @@ def _retrieve_retry_node(state: WorkflowState) -> WorkflowState:
 def _should_retry_retrieval(state: WorkflowState) -> str:
     if len(state.get("evidence", [])) < 3 and state.get("retrieval_attempts", 0) < 2:
         return "retry"
+    _mark_skipped(
+        state,
+        node="retrieve_retry",
+        summary="Secondary retrieval did not trigger.",
+        detail=f"evidence_count={len(state.get('evidence', []))}; retrieval_attempts={state.get('retrieval_attempts', 0)}",
+    )
     return "diagnose"
 
 
@@ -179,8 +304,8 @@ def _diagnose_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="diagnose",
-        summary=f"已生成诊断结果，provider={provider_used}。",
-        detail=f"causes={len(diagnosis.possible_causes)}, checks={len(diagnosis.recommended_checks)}, actions={len(diagnosis.recommended_actions)}",
+        summary=f"Diagnosis generated with provider {provider_used}.",
+        detail=f"causes={len(diagnosis.possible_causes)}; checks={len(diagnosis.recommended_checks)}; actions={len(diagnosis.recommended_actions)}",
         status="fallback" if provider_used == "heuristic_fallback" else "completed",
     )
     return state
@@ -193,7 +318,7 @@ def _trace_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="trace",
-        summary=f"已建立 {len(traceability)} 条建议-证据映射。",
+        summary=f"Built {len(traceability)} recommendation-to-evidence links.",
         detail=f"weak_links={weak_count}",
         status="warning" if weak_count else "completed",
     )
@@ -206,12 +331,13 @@ def _score_node(state: WorkflowState) -> WorkflowState:
         traceability=state["traceability"],
         provider_used=state["provider_used"],
         risk_level=state["risk_level"],
+        scene_type=state["task_type"],
     )
     state["confidence"] = confidence
     _append_trace(
         state,
         node="score",
-        summary=f"已计算置信度 {confidence.overall_score:.1f}（{confidence.level}）。",
+        summary=f"Confidence scored at {confidence.overall_score:.1f} ({confidence.level}).",
         detail=" | ".join(confidence.warnings) or "no-warning",
         status="warning" if confidence.requires_human_review else "completed",
     )
@@ -221,6 +347,12 @@ def _score_node(state: WorkflowState) -> WorkflowState:
 def _should_run_second_opinion(state: WorkflowState) -> str:
     if state["confidence"].overall_score < 60 and state.get("second_opinion_attempts", 0) < 1:
         return "second_opinion"
+    _mark_skipped(
+        state,
+        node="second_opinion",
+        summary="Second opinion did not trigger.",
+        detail=f"confidence={state['confidence'].overall_score:.1f}; threshold=60.0",
+    )
     return "draft"
 
 
@@ -238,7 +370,7 @@ def _second_opinion_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="second_opinion",
-        summary="低置信度触发二次校正，已融合启发式修正意见。",
+        summary="Second-opinion review merged stronger supported recommendations.",
         detail=f"attempt={state['second_opinion_attempts']}",
         status="retry",
     )
@@ -257,8 +389,8 @@ def _draft_work_order_node(state: WorkflowState) -> WorkflowState:
     state["work_order_draft"] = work_order
     _append_trace(
         state,
-        node="draft_work_order",
-        summary="已生成结构化工单草案。",
+        node="draft",
+        summary="Structured work-order draft generated.",
         detail=f"step_items={len(work_order.step_items)}",
     )
     return state
@@ -271,7 +403,7 @@ def _validate_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="validate",
-        summary=f"工单校验状态：{validation_result.status}。",
+        summary=f"Work order validation finished with status {validation_result.status}.",
         detail="; ".join(issue.message for issue in validation_result.issues) or "no-issues",
         status="warning" if validation_result.issues else "completed",
     )
@@ -281,6 +413,13 @@ def _validate_node(state: WorkflowState) -> WorkflowState:
 def _should_repair_work_order(state: WorkflowState) -> str:
     if state["validation_result"].status == "needs_revision" and state.get("repair_attempts", 0) < 1:
         return "repair"
+    if state["validation_result"].status == "ready_to_submit":
+        _mark_skipped(
+            state,
+            node="repair_work_order",
+            summary="Work-order repair did not trigger.",
+            detail="validation_result=ready_to_submit",
+        )
     return "respond"
 
 
@@ -290,14 +429,14 @@ def _repair_work_order_node(state: WorkflowState) -> WorkflowState:
     issue_fields = {issue.field for issue in issues}
 
     if "safety_notes" in issue_fields and not work_order.safety_notes:
-        work_order.safety_notes = ["需补充现场安全隔离、挂牌和复电条件后再提交。"]
+        work_order.safety_notes = ["Add lockout, isolation, and restart conditions before submission."]
     if "step_items" in issue_fields and not work_order.step_items:
         work_order.step_items = []
         for index, step in enumerate(work_order.steps, start=1):
             work_order.step_items.append(
                 WorkOrderStepItem(
                     kind="action",
-                    title=f"补全步骤 {index}",
+                    title=f"Recovered step {index}",
                     instruction=step,
                     priority="medium",
                     estimated_duration_minutes=15,
@@ -312,7 +451,7 @@ def _repair_work_order_node(state: WorkflowState) -> WorkflowState:
     _append_trace(
         state,
         node="repair_work_order",
-        summary="根据校验结果执行了一次自动修复。",
+        summary="Automatic work-order repair applied once.",
         detail=f"attempt={state['repair_attempts']}; fields={','.join(sorted(issue_fields)) or 'no-op'}",
         status="retry",
     )
@@ -331,6 +470,7 @@ def _respond_node(state: WorkflowState) -> WorkflowState:
     route_decision = state["route_decision"]
 
     response = DiagnosisResponse(
+        run_id=state.get("run_id", ""),
         request_id=str(uuid4()),
         storage_mode="workspace-locked",
         provider_used=state["provider_used"],
@@ -350,31 +490,31 @@ def _respond_node(state: WorkflowState) -> WorkflowState:
         validation_result=state["validation_result"],
         approval_reasons=approval_reasons,
     )
+    state["response"] = response
     _append_trace(
         state,
         node="respond",
-        summary="工作流已完成响应封装。",
+        summary="Workflow response packaged successfully.",
         detail=" | ".join(approval_reasons) or "no-approval-required",
         status="warning" if requires_confirmation else "completed",
     )
     response.execution_trace = state.get("execution_trace", [])
-    state["response"] = response
     return state
 
 
 def build_workflow():
     graph = StateGraph(WorkflowState)
-    graph.add_node("route", _route_node)
-    graph.add_node("retrieve_primary", _retrieve_primary_node)
-    graph.add_node("retrieve_retry", _retrieve_retry_node)
-    graph.add_node("diagnose", _diagnose_node)
-    graph.add_node("trace", _trace_node)
-    graph.add_node("score", _score_node)
-    graph.add_node("second_opinion", _second_opinion_node)
-    graph.add_node("draft", _draft_work_order_node)
-    graph.add_node("validate", _validate_node)
-    graph.add_node("repair_work_order", _repair_work_order_node)
-    graph.add_node("respond", _respond_node)
+    graph.add_node("route", _with_node_runtime("route", "Routing request", _route_node))
+    graph.add_node("retrieve_primary", _with_node_runtime("retrieve_primary", "Running primary retrieval", _retrieve_primary_node))
+    graph.add_node("retrieve_retry", _with_node_runtime("retrieve_retry", "Running secondary retrieval", _retrieve_retry_node))
+    graph.add_node("diagnose", _with_node_runtime("diagnose", "Generating diagnosis", _diagnose_node))
+    graph.add_node("trace", _with_node_runtime("trace", "Building traceability map", _trace_node))
+    graph.add_node("score", _with_node_runtime("score", "Calculating confidence", _score_node))
+    graph.add_node("second_opinion", _with_node_runtime("second_opinion", "Running second opinion", _second_opinion_node))
+    graph.add_node("draft", _with_node_runtime("draft", "Generating work order", _draft_work_order_node))
+    graph.add_node("validate", _with_node_runtime("validate", "Validating work order", _validate_node))
+    graph.add_node("repair_work_order", _with_node_runtime("repair_work_order", "Repairing work order", _repair_work_order_node))
+    graph.add_node("respond", _with_node_runtime("respond", "Packaging final response", _respond_node))
 
     graph.add_edge(START, "route")
     graph.add_edge("route", "retrieve_primary")

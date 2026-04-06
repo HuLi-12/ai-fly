@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.models.schemas import (
     ApprovalDecisionRequest,
     ApprovalTask,
+    LatestTodoItem,
     PortalOverviewResponse,
     PortalSummary,
     UserProfile,
@@ -47,6 +48,7 @@ def overview(user: PortalUser = Depends(get_current_user)) -> PortalOverviewResp
         summary=PortalSummary(**summary),
         approvals=[ApprovalTask(**item) for item in approvals],
         work_orders=[WorkOrderListItem(**item) for item in work_orders],
+        latest_todos=[LatestTodoItem(**item) for item in repo.list_latest_todos(user)],
     )
 
 

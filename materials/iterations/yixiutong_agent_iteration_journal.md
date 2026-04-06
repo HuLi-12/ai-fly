@@ -92,6 +92,21 @@
 - 前端诊断面板补充路由解释展示
 - 证据面板补充“闭环案例记忆”来源展示并清理关键乱码
 
+### 3.5 Agent 实时分析过程可视化 `done`
+
+本轮将 Agent 工作流从“结束后展示结果”升级为“分析中实时展示过程”，让前端可以直接看到当前正在执行的代理、当前步骤和每一步的阶段说明。
+
+已完成的改造包括：
+
+- 后端新增诊断会话机制，支持 `start-live` 与会话轮询
+- 工作流节点在运行前后推送进度事件
+- 每个节点补充代理标识，如 `Router Agent`、`Retrieval Agent`、`Diagnosis Agent`
+- 前端改为使用 live session 方式发起诊断
+- 诊断页新增实时过程面板，展示当前代理、步骤状态和阶段说明
+- 过程展示从“多步骤卡片”收敛为“单一进度条 + 当前阶段说明”
+- 诊断页输入区、复核区和过程区做了一轮视觉重排
+- 最终响应与实时进度保持同一套工作流来源，避免前后端口径不一致
+
 ## 4. 当前待优化重点
 
 | 优先级 | 状态 | 问题 | 建议方向 |
@@ -194,3 +209,59 @@
 - 检索层支持为动态案例记忆补 embedding，并对 `case_memory` 做适度加权
 - 诊断页增加路由解释展示，证据页支持显示“闭环案例记忆”来源
 - 验证结果：定向测试 `10 passed`，后端全量测试 `30 passed`，前端构建通过
+
+### [2026-04-05] Agent 实时分析过程可视化
+
+- 后端新增诊断会话接口：`/api/v1/diagnosis/start-live`、`/api/v1/diagnosis/sessions/{session_id}`
+- 工作流节点支持推送 `running / completed / warning / retry / fallback` 状态
+- 每个节点补充代理身份，前端可直接显示“当前由哪个 Agent 正在分析”
+- 前端提交诊断后改为轮询 live session，并实时展示分析步骤
+- `WorkflowTracePanel` 改为实时过程面板，不再只在结束后显示静态 trace
+- 过程展示改为统一进度条，当前阶段和当前代理集中在单一信息面板中
+- 验证结果：诊断会话测试 `4 passed`，后端全量测试 `31 passed`，前端构建通过
+
+### [2026-04-05] 分析页布局与完成度语义修正
+
+- 修正 live session 进度模型：可选分支未触发时改为 `skipped`，不再错误显示为“未完成”
+- 二次检索、二次校正、工单修复现在会明确显示“已触发”或“未触发”
+- 系统状态面板改为横向紧凑条，并收进折叠区域，减少对主流程的视觉干扰
+- 证据回召、工单草案改为可折叠内容区，并增加各自独立滚动区
+- 诊断页主视觉改为更克制的浅色卡片体系，降低高饱和渐变面积
+- 关键流程文案统一修正为正常中文，提升“已完成度”和可信感
+
+### [2026-04-06] 待办聚合与轻量进度展示
+
+- 重新评估首页“最新待办”逻辑，确认原实现只展示审批任务，导致维修工程师场景下经常出现空列表
+- 概览接口新增统一待办流 `latest_todos`，合并待审批、待执行、处理中和待跟踪任务
+- 维修工程师在默认演示数据下会看到自己发起且仍待审批的工单跟踪项，不再误判为“没有待办”
+- `WorkflowTracePanel` 从多块解释卡片收敛为轻量进度条，只保留当前阶段、当前代理、完成度和简要分支说明
+- 详细步骤收进折叠明细，默认不干扰主操作区域
+- 验证结果：门户接口测试与全量后端测试通过，前端构建通过
+
+### [2026-04-06] Agent 运行时与可靠性治理第一阶段
+
+- 新增 Prompt 系统化模块 `app/services/prompting.py`，按 `fault_diagnosis / process_deviation / quality_inspection` 三类场景统一角色设定、约束和 few-shot 示例
+- 诊断生成链路改为“结构化提示优先，文本提示兜底，启发式诊断最后兜底”，实现位置在 `app/agents/diagnosis.py`
+- 新增 `materials/rules/confidence_calibration.json` 与 `app/services/confidence_calibration.py`，把原始置信度改为“原始分 + 场景偏置 + provider 偏置 + 风险惩罚 + 证据/追溯惩罚”的校准分
+- 工作流运行时新增 `AgentRuntimeRepository` 持久化运行记录、快照与节点耗时指标，支持按 `run_id` 和 `request_id` 做审计重放
+- 新增结构化日志 `runtime/logs/agent_events.jsonl`，记录 workflow 启动、provider 调用、节点完成/失败、cache hit 等事件
+- Provider 运行时补齐超时/瞬时错误重试与退避，`generate_text_with_fallback` / `generate_structured_with_fallback` 会先做同通道重试，再做主备降级
+- 接口层新增：
+- `GET /api/v1/diagnosis/runs/{run_id}`
+- `GET /api/v1/diagnosis/replay/{request_id}`
+- `GET /api/v1/diagnosis/metrics`
+- `GET /api/v1/system/agent-metrics`
+- 诊断请求新增幂等复用：相同请求命中 TTL 内已完成结果时，会直接返回缓存响应，但分配新的 `run_id`，并把该次请求记为 `cache_hit`
+- live session 与普通诊断都已接入 `run_id`，后续可直接从前端诊断页跳到审计重放
+- 验证结果：新增 runtime / retry / replay / idempotency 测试后，后端全量测试 `33 passed`
+
+### [2026-04-06] 草稿保存与恢复流程重构
+
+- 重新评估前端草稿链路，确认“切换场景”和“加载示例预设”原先共用一个动作，导致用户切场景时当前输入会被覆盖
+- 新增独立 `changeScene` 流程：切换场景前会先同步保存当前场景的未保存输入，再按“本会话缓存 -> 已保存草稿 -> 预设模板”的优先级装载目标场景
+- `restoreDraft` 改为真正的恢复动作，不再把恢复后的表单立刻再次标记为脏数据
+- 自动保存改为延迟保存，减少每次键入都直接写本地存储的频率
+- 草稿状态新增三类显式信号：`draftAvailable`、`draftDirty`、`draftSavedAt`
+- 输入面板现在会直接展示“有未保存变更 / 已恢复草稿 / 当前内容已自动保存 / 当前为预设模板”这些状态，不再让用户猜测当前表单来源
+- 模块切换从 `applyScenePreset` 改为 `changeScene`，不同业务席位之间切换时不会再无条件覆盖输入
+- 验证结果：前端 `npm run build` 通过

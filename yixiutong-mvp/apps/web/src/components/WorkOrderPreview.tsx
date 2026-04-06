@@ -1,5 +1,8 @@
+import { CollapsibleSection } from "./CollapsibleSection";
+
 type StepItem = {
   kind: "check" | "action";
+  title?: string;
   instruction: string;
   priority: "high" | "medium" | "low";
   estimated_duration_minutes: number;
@@ -31,115 +34,180 @@ type WorkOrderDraft = {
 const priorityLabel = {
   high: "高",
   medium: "中",
-  low: "低"
+  low: "低",
 } as const;
 
 const actionTypeLabel = {
   immediate: "立即执行",
   planned: "计划执行",
-  monitor: "持续观察"
+  monitor: "持续观察",
 } as const;
 
 export function WorkOrderPreview(props: { workOrder: WorkOrderDraft; validationResult?: ValidationResult }) {
   const stepItems = props.workOrder.step_items ?? [];
+  const badge =
+    props.validationResult?.status === "needs_revision"
+      ? "待修订"
+      : props.validationResult?.status === "ready_to_submit"
+        ? "可提交"
+        : "草稿";
 
   return (
-    <section style={panelStyle}>
-      <h2 style={{ marginTop: 0 }}>工单草案</h2>
-      <p>
-        <strong>{props.workOrder.summary}</strong>
-      </p>
+    <CollapsibleSection
+      title="工单草案"
+      subtitle="工单会先给出结构化步骤，再说明审批要求、安全注意事项和校验结果。"
+      badge={badge}
+      defaultOpen
+    >
+      <div style={contentScrollStyle}>
+        <div style={summaryCardStyle}>
+          <strong style={{ color: "#102a43" }}>{props.workOrder.summary}</strong>
+          <div style={summaryMetaStyle}>建议处理角色：{props.workOrder.assignee_placeholder}</div>
+          <p style={{ margin: "10px 0 0", lineHeight: 1.8, color: "#243b53" }}>{props.workOrder.risk_notice}</p>
+        </div>
 
-      {stepItems.length > 0 ? (
-        <div style={{ display: "grid", gap: 10 }}>
-          {stepItems.map((item, index) => (
-            <div key={`${item.kind}-${index}`} style={stepCardStyle}>
-              <strong>
-                {index + 1}. {item.kind === "check" ? "检查" : "动作"}
-              </strong>
-              <p style={{ margin: "6px 0 10px", lineHeight: 1.7 }}>{item.instruction}</p>
-              <span style={metaStyle}>
-                优先级：{priorityLabel[item.priority]} / 预计耗时：{item.estimated_duration_minutes} 分钟
-                {item.action_type ? ` / 动作类型：${actionTypeLabel[item.action_type]}` : ""}
-              </span>
+        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+          {stepItems.length > 0 ? (
+            stepItems.map((item, index) => (
+              <div key={`${item.kind}-${index}`} style={stepCardStyle}>
+                <div style={stepHeadStyle}>
+                  <strong>
+                    {index + 1}. {item.title || (item.kind === "check" ? "检查项" : "处置动作")}
+                  </strong>
+                  <span style={stepMetaPillStyle}>{priorityLabel[item.priority]}优先</span>
+                </div>
+                <p style={{ margin: "8px 0 10px", lineHeight: 1.75, color: "#243b53" }}>{item.instruction}</p>
+                <div style={stepMetaStyle}>
+                  预计耗时：{item.estimated_duration_minutes} 分钟
+                  {item.action_type ? ` ｜ 动作类型：${actionTypeLabel[item.action_type]}` : ""}
+                </div>
+              </div>
+            ))
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }}>
+              {props.workOrder.steps.map((item) => (
+                <li key={item} style={{ lineHeight: 1.75, color: "#243b53" }}>
+                  {item}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        {props.workOrder.evidence_references?.length ? (
+          <details style={detailsStyle}>
+            <summary style={summaryToggleStyle}>证据引用（{props.workOrder.evidence_references.length}）</summary>
+            <div style={{ marginTop: 10, color: "#486581", lineHeight: 1.8 }}>
+              {props.workOrder.evidence_references.join(" / ")}
             </div>
-          ))}
-        </div>
-      ) : (
-        <ol style={{ paddingLeft: 20, display: "grid", gap: 8 }}>
-          {props.workOrder.steps.map((item) => (
-            <li key={item} style={{ lineHeight: 1.7 }}>
-              {item}
-            </li>
-          ))}
-        </ol>
-      )}
+          </details>
+        ) : null}
 
-      <p style={{ lineHeight: 1.7 }}>{props.workOrder.risk_notice}</p>
-      <p>建议处理角色：{props.workOrder.assignee_placeholder}</p>
-
-      {props.workOrder.evidence_references && props.workOrder.evidence_references.length > 0 ? (
-        <p style={metaStyle}>证据引用：{props.workOrder.evidence_references.join(" / ")}</p>
-      ) : null}
-
-      {props.workOrder.safety_notes && props.workOrder.safety_notes.length > 0 ? (
-        <div style={{ marginTop: 12 }}>
-          <strong>安全注意事项</strong>
-          <ul style={{ paddingLeft: 20, marginBottom: 0 }}>
-            {props.workOrder.safety_notes.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {props.validationResult ? (
-        <div style={validationStyle(props.validationResult.status)}>
-          <strong>校验状态：{props.validationResult.status === "ready_to_submit" ? "可提交" : "需修订"}</strong>
-          <p style={{ margin: "8px 0 0" }}>
-            {props.validationResult.requires_approval ? "该工单需要人工审批。" : "该工单可进入提交流程。"}
-          </p>
-          {props.validationResult.issues.length > 0 ? (
-            <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
-              {props.validationResult.issues.map((issue) => (
-                <li key={`${issue.field}-${issue.message}`}>
-                  {issue.message}
-                  {issue.suggested_fix ? ` 建议：${issue.suggested_fix}` : ""}
+        {props.workOrder.safety_notes?.length ? (
+          <details style={detailsStyle}>
+            <summary style={summaryToggleStyle}>安全注意事项（{props.workOrder.safety_notes.length}）</summary>
+            <ul style={{ margin: "10px 0 0", paddingLeft: 18, display: "grid", gap: 6 }}>
+              {props.workOrder.safety_notes.map((item) => (
+                <li key={item} style={{ lineHeight: 1.75, color: "#243b53" }}>
+                  {item}
                 </li>
               ))}
             </ul>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+          </details>
+        ) : null}
+
+        {props.validationResult ? (
+          <section style={validationStyle(props.validationResult.status)}>
+            <strong>校验状态：{props.validationResult.status === "ready_to_submit" ? "可提交" : "需修订"}</strong>
+            <p style={{ margin: "8px 0 0", color: "#243b53", lineHeight: 1.75 }}>
+              {props.validationResult.requires_approval ? "该工单需要进入人工审批流程。" : "该工单可以进入执行与反馈流程。"}
+            </p>
+            {props.validationResult.issues.length > 0 ? (
+              <ul style={{ margin: "10px 0 0", paddingLeft: 18, display: "grid", gap: 6 }}>
+                {props.validationResult.issues.map((issue) => (
+                  <li key={`${issue.field}-${issue.message}`} style={{ lineHeight: 1.75 }}>
+                    {issue.message}
+                    {issue.suggested_fix ? ` 建议：${issue.suggested_fix}` : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
+    </CollapsibleSection>
   );
 }
 
-const panelStyle = {
-  background: "#fff",
-  borderRadius: 22,
-  padding: 20,
-  border: "1px solid rgba(12, 52, 83, 0.12)"
+const contentScrollStyle = {
+  maxHeight: 500,
+  overflowY: "auto" as const,
+  paddingRight: 4,
+} as const;
+
+const summaryCardStyle = {
+  borderRadius: 18,
+  padding: 14,
+  background: "#f8fafc",
+  border: "1px solid rgba(148, 163, 184, 0.16)",
+} as const;
+
+const summaryMetaStyle = {
+  marginTop: 8,
+  color: "#5f7285",
+  fontSize: 13,
 } as const;
 
 const stepCardStyle = {
-  borderRadius: 14,
-  padding: 12,
-  background: "#f7fafc",
-  border: "1px solid rgba(12, 52, 83, 0.08)"
+  borderRadius: 18,
+  padding: 14,
+  background: "#fbfcfe",
+  border: "1px solid rgba(148, 163, 184, 0.16)",
 } as const;
 
-const metaStyle = {
-  color: "#5a6d7d",
-  fontSize: 12
+const stepHeadStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  flexWrap: "wrap" as const,
+  alignItems: "center",
+} as const;
+
+const stepMetaPillStyle = {
+  borderRadius: 999,
+  padding: "4px 10px",
+  background: "#eef2f7",
+  color: "#486581",
+  fontSize: 12,
+  fontWeight: 700,
+} as const;
+
+const stepMetaStyle = {
+  color: "#64748b",
+  fontSize: 12,
+} as const;
+
+const detailsStyle = {
+  marginTop: 14,
+  borderRadius: 18,
+  padding: 14,
+  background: "#ffffff",
+  border: "1px solid rgba(148, 163, 184, 0.16)",
+} as const;
+
+const summaryToggleStyle = {
+  cursor: "pointer",
+  fontWeight: 800,
+  color: "#102a43",
 } as const;
 
 function validationStyle(status: "ready_to_submit" | "needs_revision") {
   return {
     marginTop: 14,
-    borderRadius: 14,
+    borderRadius: 18,
     padding: 14,
-    background: status === "ready_to_submit" ? "#edf9f2" : "#fff4e8",
-    border: `1px solid ${status === "ready_to_submit" ? "rgba(11, 122, 75, 0.18)" : "rgba(185, 92, 0, 0.18)"}`
+    background: status === "ready_to_submit" ? "#f0fdf4" : "#fff7ed",
+    border: `1px solid ${status === "ready_to_submit" ? "rgba(34, 197, 94, 0.18)" : "rgba(245, 158, 11, 0.22)"}`,
+    color: "#102a43",
   } as const;
 }

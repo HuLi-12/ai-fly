@@ -1,0 +1,24 @@
+{
+  "scene_bias": {
+    "fault_diagnosis": 0.0,
+    "process_deviation": -1.5,
+    "quality_inspection": -1.0
+  },
+  "provider_bias": {
+    "heuristic_fallback": -12.0,
+    "+text_assist": -4.0,
+    "ollama": -1.0,
+    "openai_compatible": 1.5
+  },
+  "risk_penalty": {
+    "low": 0.0,
+    "medium": -1.5,
+    "high": -4.0
+  },
+  "evidence_thresholds": {
+    "min_evidence": 3,
+    "low_evidence_penalty": -6.0,
+    "strong_trace_target": 0.65,
+    "weak_trace_penalty": -5.0
+  }
+}

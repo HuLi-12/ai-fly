@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   clearToken,
+  fetchDiagnosisSession,
   decideWorkOrder,
   fetchApprovals,
   fetchCurrentUser,
@@ -15,12 +16,13 @@ import {
   fetchWorkOrders,
   login,
   persistToken,
-  startDiagnosis,
+  startDiagnosisLive,
   submitFeedback,
   testNotificationChannel,
   updateNotificationChannel,
   type ApprovalTask,
   type DiagnosisResponse,
+  type DiagnosisSessionState,
   type KnowledgeDocumentDetail,
   type KnowledgeDocumentSummary,
   type NotificationChannel,
@@ -51,6 +53,16 @@ type DraftPayload = {
   deviceType: string;
   contextNotes: string;
   savedAt: string;
+};
+
+type DraftFields = Omit<DraftPayload, "sceneType" | "savedAt">;
+
+type DraftSource = "preset" | "draft" | "session";
+
+type SceneDraftView = DraftFields & {
+  draftAvailable: boolean;
+  draftSavedAt: string | null;
+  draftSource: DraftSource;
 };
 
 type FieldErrors = {
@@ -123,6 +135,51 @@ function removeDraft(sceneType: SceneType) {
   window.localStorage.removeItem(draftKey(sceneType));
 }
 
+function extractDraftFields(payload: DraftPayload | DraftFields): DraftFields {
+  return {
+    faultCode: payload.faultCode,
+    symptomText: payload.symptomText,
+    deviceType: payload.deviceType,
+    contextNotes: payload.contextNotes
+  };
+}
+
+function getScenePreset(sceneType: SceneType): DraftFields {
+  return extractDraftFields(scenePresets[sceneType]);
+}
+
+function createDraftPayload(sceneType: SceneType, fields: DraftFields): DraftPayload {
+  return {
+    sceneType,
+    ...fields,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function hasMeaningfulDraft(sceneType: SceneType, fields: DraftFields) {
+  const preset = getScenePreset(sceneType);
+  return (
+    fields.faultCode.trim() !== preset.faultCode.trim() ||
+    fields.symptomText.trim() !== preset.symptomText.trim() ||
+    fields.deviceType.trim() !== preset.deviceType.trim() ||
+    fields.contextNotes.trim() !== preset.contextNotes.trim()
+  );
+}
+
+function buildSceneDraftView(
+  sceneType: SceneType,
+  source: DraftSource,
+  fields: DraftFields,
+  storedDraft: DraftPayload | null
+): SceneDraftView {
+  return {
+    ...fields,
+    draftAvailable: Boolean(storedDraft),
+    draftSavedAt: storedDraft?.savedAt ?? null,
+    draftSource: source
+  };
+}
+
 function validateDiagnosisInput(sceneType: SceneType, faultCode: string, symptomText: string, deviceType: string): FieldErrors {
   const errors: FieldErrors = {};
   const normalizedFaultCode = faultCode.trim();
@@ -171,18 +228,24 @@ function humanizeErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function useYixiutongWorkspace() {
+  const initialScene = "fault_diagnosis" as SceneType;
+  const initialPreset = getScenePreset(initialScene);
+  const initialStoredDraft = readDraft(initialScene);
+
   const [user, setUser] = useState<UserProfile | null>(null);
   const [demoUsers, setDemoUsers] = useState<UserProfile[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
 
-  const [sceneType, setSceneTypeState] = useState<SceneType>("fault_diagnosis");
-  const [faultCode, setFaultCodeState] = useState(scenePresets.fault_diagnosis.faultCode);
-  const [symptomText, setSymptomTextState] = useState(scenePresets.fault_diagnosis.symptomText);
-  const [deviceType, setDeviceTypeState] = useState(scenePresets.fault_diagnosis.deviceType);
-  const [contextNotes, setContextNotesState] = useState(scenePresets.fault_diagnosis.contextNotes);
-  const [draftTouched, setDraftTouched] = useState(false);
-  const [draftAvailable, setDraftAvailable] = useState(Boolean(readDraft("fault_diagnosis")));
+  const [sceneType, setSceneTypeState] = useState<SceneType>(initialScene);
+  const [faultCode, setFaultCodeState] = useState(initialPreset.faultCode);
+  const [symptomText, setSymptomTextState] = useState(initialPreset.symptomText);
+  const [deviceType, setDeviceTypeState] = useState(initialPreset.deviceType);
+  const [contextNotes, setContextNotesState] = useState(initialPreset.contextNotes);
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [draftAvailable, setDraftAvailable] = useState(Boolean(initialStoredDraft));
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(initialStoredDraft?.savedAt ?? null);
+  const [draftSource, setDraftSource] = useState<DraftSource>("preset");
 
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
   const [decisionLoading, setDecisionLoading] = useState(false);
@@ -190,6 +253,7 @@ export function useYixiutongWorkspace() {
   const [notificationSaving, setNotificationSaving] = useState(false);
 
   const [result, setResult] = useState<DiagnosisResponse | null>(null);
+  const [diagnosisSession, setDiagnosisSession] = useState<DiagnosisSessionState | null>(null);
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [approvals, setApprovals] = useState<ApprovalTask[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrderListItem[]>([]);
@@ -204,32 +268,159 @@ export function useYixiutongWorkspace() {
   const [successMessage, setSuccessMessage] = useState("");
   const [decisionMessage, setDecisionMessage] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const sessionPollTimerRef = useRef<number | null>(null);
+  const draftSaveTimerRef = useRef<number | null>(null);
+  const currentSceneRef = useRef<SceneType>(initialScene);
+  const currentFieldsRef = useRef<DraftFields>(initialPreset);
+  const sceneDraftViewsRef = useRef<Partial<Record<SceneType, SceneDraftView>>>({
+    fault_diagnosis: buildSceneDraftView("fault_diagnosis", "preset", getScenePreset("fault_diagnosis"), readDraft("fault_diagnosis"))
+  });
 
   const validationErrors = validateDiagnosisInput(sceneType, faultCode, symptomText, deviceType);
   const canSubmitDiagnosis = !diagnosisLoading && Object.keys(validationErrors).length === 0;
+
+  function cancelDraftSaveTimer() {
+    if (draftSaveTimerRef.current !== null) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+  }
+
+  function applySceneView(scene: SceneType, view: SceneDraftView) {
+    setSceneTypeState(scene);
+    setFaultCodeState(view.faultCode);
+    setSymptomTextState(view.symptomText);
+    setDeviceTypeState(view.deviceType);
+    setContextNotesState(view.contextNotes);
+    setDraftDirty(false);
+    setDraftAvailable(view.draftAvailable);
+    setDraftSavedAt(view.draftSavedAt);
+    setDraftSource(view.draftSource);
+  }
+
+  function persistSceneDraft(scene: SceneType, fields: DraftFields) {
+    if (!hasMeaningfulDraft(scene, fields)) {
+      return null;
+    }
+    const payload = createDraftPayload(scene, fields);
+    saveDraft(payload);
+    return payload;
+  }
+
+  function clearDiagnosisOutputs() {
+    setResult(null);
+    setDiagnosisSession(null);
+    setSelectedWorkOrder(null);
+    clearTransientMessages();
+  }
+
+  function flushCurrentSceneDraftIfDirty() {
+    if (!draftDirty) {
+      return;
+    }
+    cancelDraftSaveTimer();
+    const activeScene = currentSceneRef.current;
+    const payload = persistSceneDraft(activeScene, currentFieldsRef.current);
+    if (payload) {
+      sceneDraftViewsRef.current[activeScene] = buildSceneDraftView(activeScene, "session", extractDraftFields(payload), payload);
+    }
+    setDraftDirty(false);
+  }
+
+  function changeScene(scene: SceneType) {
+    if (scene === currentSceneRef.current) {
+      return;
+    }
+
+    flushCurrentSceneDraftIfDirty();
+
+    const cachedView = sceneDraftViewsRef.current[scene];
+    if (cachedView) {
+      applySceneView(scene, cachedView);
+      clearDiagnosisOutputs();
+      return;
+    }
+
+    const storedDraft = readDraft(scene);
+    if (storedDraft) {
+      applySceneView(scene, buildSceneDraftView(scene, "draft", extractDraftFields(storedDraft), storedDraft));
+      clearDiagnosisOutputs();
+      return;
+    }
+
+    applySceneView(scene, buildSceneDraftView(scene, "preset", getScenePreset(scene), null));
+    clearDiagnosisOutputs();
+  }
 
   useEffect(() => {
     void bootstrap();
   }, []);
 
   useEffect(() => {
-    setDraftAvailable(Boolean(readDraft(sceneType)));
-  }, [sceneType]);
+    return () => {
+      if (sessionPollTimerRef.current !== null) {
+        window.clearTimeout(sessionPollTimerRef.current);
+      }
+      if (draftSaveTimerRef.current !== null) {
+        window.clearTimeout(draftSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
-    if (!draftTouched) {
-      return;
-    }
-    saveDraft({
-      sceneType,
+    currentSceneRef.current = sceneType;
+    currentFieldsRef.current = {
+      faultCode,
+      symptomText,
+      deviceType,
+      contextNotes
+    };
+  }, [sceneType, faultCode, symptomText, deviceType, contextNotes]);
+
+  useEffect(() => {
+    sceneDraftViewsRef.current[sceneType] = {
       faultCode,
       symptomText,
       deviceType,
       contextNotes,
-      savedAt: new Date().toISOString()
-    });
-    setDraftAvailable(true);
-  }, [sceneType, faultCode, symptomText, deviceType, contextNotes, draftTouched]);
+      draftAvailable,
+      draftSavedAt,
+      draftSource
+    };
+  }, [sceneType, faultCode, symptomText, deviceType, contextNotes, draftAvailable, draftSavedAt, draftSource]);
+
+  useEffect(() => {
+    if (!draftDirty) {
+      return;
+    }
+    if (draftSaveTimerRef.current !== null) {
+      window.clearTimeout(draftSaveTimerRef.current);
+    }
+    draftSaveTimerRef.current = window.setTimeout(() => {
+      const fields = currentFieldsRef.current;
+      const activeScene = currentSceneRef.current;
+      if (!hasMeaningfulDraft(activeScene, fields)) {
+        setDraftDirty(false);
+        setDraftAvailable(Boolean(readDraft(activeScene)));
+        setDraftSavedAt(readDraft(activeScene)?.savedAt ?? null);
+        setDraftSource("preset");
+        return;
+      }
+      const payload = createDraftPayload(activeScene, fields);
+      saveDraft(payload);
+      setDraftAvailable(true);
+      setDraftSavedAt(payload.savedAt);
+      setDraftSource("session");
+      setDraftDirty(false);
+    }, 600);
+
+    return () => {
+      if (draftSaveTimerRef.current !== null) {
+        window.clearTimeout(draftSaveTimerRef.current);
+        draftSaveTimerRef.current = null;
+      }
+    };
+  }, [draftDirty, sceneType, faultCode, symptomText, deviceType, contextNotes]);
 
   async function bootstrap() {
     setAuthLoading(true);
@@ -323,65 +514,110 @@ export function useYixiutongWorkspace() {
     setFeedbackMessage("");
   }
 
+  function scheduleSessionPoll(sessionId: string) {
+    if (sessionPollTimerRef.current !== null) {
+      window.clearTimeout(sessionPollTimerRef.current);
+    }
+    sessionPollTimerRef.current = window.setTimeout(() => {
+      void pollDiagnosisSession(sessionId);
+    }, 700);
+  }
+
+  async function pollDiagnosisSession(sessionId: string) {
+    try {
+      const session = await fetchDiagnosisSession(sessionId);
+      setDiagnosisSession(session);
+
+      if (session.status === "completed" && session.response) {
+        if (sessionPollTimerRef.current !== null) {
+          window.clearTimeout(sessionPollTimerRef.current);
+          sessionPollTimerRef.current = null;
+        }
+        setResult(session.response);
+        if (session.response.work_order_id) {
+          const detail = await fetchWorkOrderDetail(session.response.work_order_id);
+          setSelectedWorkOrder(detail);
+        }
+        await Promise.all([refreshPortalData(), refreshSystemStatus()]);
+        setSuccessMessage("Agent 已完成分析，并生成工单与审批流。");
+        setDiagnosisLoading(false);
+        return;
+      }
+
+      if (session.status === "failed") {
+        if (sessionPollTimerRef.current !== null) {
+          window.clearTimeout(sessionPollTimerRef.current);
+          sessionPollTimerRef.current = null;
+        }
+        setDiagnosisLoading(false);
+        setError(session.error_message || "诊断执行失败");
+        return;
+      }
+
+      scheduleSessionPoll(sessionId);
+    } catch (err) {
+      if (sessionPollTimerRef.current !== null) {
+        window.clearTimeout(sessionPollTimerRef.current);
+        sessionPollTimerRef.current = null;
+      }
+      setDiagnosisLoading(false);
+      setError(humanizeErrorMessage(err, "诊断会话轮询失败"));
+    }
+  }
+
   function applyScenePreset(scene: SceneType = sceneType) {
-    const preset = scenePresets[scene];
-    setSceneTypeState(scene);
-    setFaultCodeState(preset.faultCode);
-    setSymptomTextState(preset.symptomText);
-    setDeviceTypeState(preset.deviceType);
-    setContextNotesState(preset.contextNotes);
-    setDraftTouched(false);
-    setResult(null);
-    setSelectedWorkOrder(null);
-    clearTransientMessages();
-    setDraftAvailable(Boolean(readDraft(scene)));
+    flushCurrentSceneDraftIfDirty();
+    const storedDraft = readDraft(scene);
+    const presetView = buildSceneDraftView(scene, "preset", getScenePreset(scene), storedDraft);
+    sceneDraftViewsRef.current[scene] = presetView;
+    applySceneView(scene, presetView);
+    clearDiagnosisOutputs();
   }
 
   function restoreDraft(scene: SceneType = sceneType) {
+    flushCurrentSceneDraftIfDirty();
     const draft = readDraft(scene);
     if (!draft) {
       setError("当前场景没有可恢复的草稿。");
       return;
     }
-    setSceneTypeState(scene);
-    setFaultCodeState(draft.faultCode);
-    setSymptomTextState(draft.symptomText);
-    setDeviceTypeState(draft.deviceType);
-    setContextNotesState(draft.contextNotes);
-    setDraftTouched(true);
-    setResult(null);
-    setSelectedWorkOrder(null);
-    clearTransientMessages();
+    const draftView = buildSceneDraftView(scene, "draft", extractDraftFields(draft), draft);
+    sceneDraftViewsRef.current[scene] = draftView;
+    applySceneView(scene, draftView);
+    clearDiagnosisOutputs();
     setSuccessMessage(`已恢复 ${scenePresets[scene].label} 草稿。`);
-    setDraftAvailable(true);
   }
 
   function clearDraftForScene(scene: SceneType = sceneType) {
+    cancelDraftSaveTimer();
     removeDraft(scene);
+    const nextView = buildSceneDraftView(scene, "preset", getScenePreset(scene), null);
+    sceneDraftViewsRef.current[scene] = nextView;
     if (scene === sceneType) {
-      setDraftAvailable(false);
+      applySceneView(scene, nextView);
+      clearDiagnosisOutputs();
       setSuccessMessage(`已清除 ${scenePresets[scene].label} 草稿。`);
     }
   }
 
   function setFaultCode(value: string) {
     setFaultCodeState(value);
-    setDraftTouched(true);
+    setDraftDirty(true);
   }
 
   function setSymptomText(value: string) {
     setSymptomTextState(value);
-    setDraftTouched(true);
+    setDraftDirty(true);
   }
 
   function setDeviceType(value: string) {
     setDeviceTypeState(value);
-    setDraftTouched(true);
+    setDraftDirty(true);
   }
 
   function setContextNotes(value: string) {
     setContextNotesState(value);
-    setDraftTouched(true);
+    setDraftDirty(true);
   }
 
   async function loginAction(username: string, password: string) {
@@ -423,6 +659,11 @@ export function useYixiutongWorkspace() {
   }
 
   function logoutAction() {
+    cancelDraftSaveTimer();
+    if (sessionPollTimerRef.current !== null) {
+      window.clearTimeout(sessionPollTimerRef.current);
+      sessionPollTimerRef.current = null;
+    }
     clearToken();
     setUser(null);
     setOverview(null);
@@ -431,6 +672,7 @@ export function useYixiutongWorkspace() {
     setSelectedWorkOrder(null);
     setSelectedDocument(null);
     setResult(null);
+    setDiagnosisSession(null);
     setNotificationChannels([]);
     setSuccessMessage("已退出当前账号。");
   }
@@ -447,26 +689,39 @@ export function useYixiutongWorkspace() {
       return;
     }
 
+    flushCurrentSceneDraftIfDirty();
     setDiagnosisLoading(true);
     clearTransientMessages();
     try {
-      const data = await startDiagnosis({
+      if (sessionPollTimerRef.current !== null) {
+        window.clearTimeout(sessionPollTimerRef.current);
+        sessionPollTimerRef.current = null;
+      }
+      setResult(null);
+      setDiagnosisSession(null);
+      setSelectedWorkOrder(null);
+
+      const sessionStart = await startDiagnosisLive({
         fault_code: faultCode.trim(),
         symptom_text: symptomText.trim(),
         device_type: deviceType.trim(),
         context_notes: contextNotes.trim(),
         scene_type: sceneType
       });
-      setResult(data);
-      if (data.work_order_id) {
-        const detail = await fetchWorkOrderDetail(data.work_order_id);
-        setSelectedWorkOrder(detail);
-      }
-      await Promise.all([refreshPortalData(), refreshSystemStatus()]);
-      setSuccessMessage("Agent 已完成分析，并生成工单与审批流。");
+      setDiagnosisSession({
+        session_id: sessionStart.session_id,
+        status: sessionStart.status,
+        current_node: "",
+        current_agent: "",
+        started_at: "",
+        finished_at: "",
+        error_message: "",
+        progress: [],
+        response: null
+      });
+      await pollDiagnosisSession(sessionStart.session_id);
     } catch (err) {
       setError(humanizeErrorMessage(err, "诊断执行失败"));
-    } finally {
       setDiagnosisLoading(false);
     }
   }
@@ -561,7 +816,8 @@ export function useYixiutongWorkspace() {
     symptomText,
     deviceType,
     contextNotes,
-    setSceneType: setSceneTypeState,
+    setSceneType: changeScene,
+    changeScene,
     setFaultCode,
     setSymptomText,
     setDeviceType,
@@ -571,6 +827,7 @@ export function useYixiutongWorkspace() {
     feedbackLoading,
     notificationSaving,
     result,
+    diagnosisSession,
     overview,
     approvals,
     workOrders,
@@ -588,6 +845,9 @@ export function useYixiutongWorkspace() {
     validationErrors,
     canSubmitDiagnosis,
     draftAvailable,
+    draftSavedAt,
+    draftDirty,
+    draftSource,
     loginAction,
     logoutAction,
     refreshPortalData,

@@ -104,9 +104,10 @@ export type DiagnosisResponse = {
   }>;
   execution_trace?: Array<{
     node: string;
-    status: "completed" | "warning" | "fallback" | "retry";
+    status: "completed" | "warning" | "fallback" | "retry" | "skipped";
     summary: string;
     detail: string;
+    agent?: string;
   }>;
   validation_result?: {
     status: "ready_to_submit" | "needs_revision";
@@ -119,6 +120,33 @@ export type DiagnosisResponse = {
     }>;
   };
   approval_reasons?: string[];
+};
+
+export type AgentProgressItem = {
+  node: string;
+  label: string;
+  agent: string;
+  status: "pending" | "running" | "completed" | "warning" | "fallback" | "retry" | "skipped" | "failed";
+  summary: string;
+  detail: string;
+  updated_at: string;
+};
+
+export type DiagnosisSessionStartResponse = {
+  session_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+};
+
+export type DiagnosisSessionState = {
+  session_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  current_node: string;
+  current_agent: string;
+  started_at: string;
+  finished_at: string;
+  error_message: string;
+  progress: AgentProgressItem[];
+  response?: DiagnosisResponse | null;
 };
 
 export type ApprovalTask = {
@@ -169,6 +197,22 @@ export type WorkOrderDetail = WorkOrderListItem & {
   approvals: ApprovalTask[];
 };
 
+export type LatestTodoItem = {
+  todo_id: string;
+  work_order_id: string;
+  task_type: "approval" | "execution" | "in_progress" | "tracking";
+  title: string;
+  scene_type: SceneType;
+  scene_label: string;
+  status_label: string;
+  priority: string;
+  summary: string;
+  assignee_name: string;
+  action_label: string;
+  target_module: "approvals" | "work_orders";
+  updated_at: string;
+};
+
 export type PortalOverviewResponse = {
   profile: UserProfile;
   summary: {
@@ -181,6 +225,7 @@ export type PortalOverviewResponse = {
   };
   approvals: ApprovalTask[];
   work_orders: WorkOrderListItem[];
+  latest_todos: LatestTodoItem[];
 };
 
 export type SelfCheckResponse = {
@@ -375,6 +420,17 @@ export async function startDiagnosis(payload: DiagnosisPayload) {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export async function startDiagnosisLive(payload: DiagnosisPayload) {
+  return request<DiagnosisSessionStartResponse>("/api/v1/diagnosis/start-live", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchDiagnosisSession(sessionId: string) {
+  return request<DiagnosisSessionState>(`/api/v1/diagnosis/sessions/${sessionId}`);
 }
 
 export async function confirmDiagnosis(payload: ConfirmPayload) {

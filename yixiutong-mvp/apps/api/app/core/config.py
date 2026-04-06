@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     free_space_floor_gb: int = Field(default=10)
     safe_operation_floor_gb: int = Field(default=12)
     llm_timeout_seconds: int = Field(default=180)
+    workflow_timeout_seconds: int = Field(default=75)
+    provider_max_retries: int = Field(default=2)
+    provider_retry_backoff_ms: int = Field(default=250)
+    idempotency_enabled: bool = Field(default=True)
+    idempotency_ttl_hours: int = Field(default=24)
     retrieval_vector_enabled: bool = Field(default=True)
     retrieval_embedding_provider: str = Field(default="hashing")
     retrieval_embedding_model: str = Field(default="")
@@ -93,6 +98,10 @@ class Settings(BaseSettings):
         return self.models_root / "ollama"
 
     @property
+    def workflow_snapshot_dir(self) -> Path:
+        return self.langgraph_dir / "snapshots"
+
+    @property
     def index_manifest_path(self) -> Path:
         return self.index_dir / "index.json"
 
@@ -103,6 +112,10 @@ class Settings(BaseSettings):
     @property
     def portal_db_path(self) -> Path:
         return self.db_dir / "portal.sqlite3"
+
+    @property
+    def agent_runtime_db_path(self) -> Path:
+        return self.db_dir / "agent_runtime.sqlite3"
 
     @property
     def local_model_manifest_path(self) -> Path:
@@ -154,6 +167,7 @@ class Settings(BaseSettings):
             self.hf_cache_dir,
             self.transformers_cache_dir,
             self.langgraph_dir,
+            self.workflow_snapshot_dir,
             self.index_dir,
             self.logs_dir,
             self.db_dir,
@@ -174,6 +188,7 @@ class Settings(BaseSettings):
             "HF_HOME": str(self.hf_cache_dir),
             "TRANSFORMERS_CACHE": str(self.transformers_cache_dir),
             "LANGGRAPH_DIR": str(self.langgraph_dir),
+            "WORKFLOW_SNAPSHOT_DIR": str(self.workflow_snapshot_dir),
             "INDEX_DIR": str(self.index_dir),
             "LOGS_DIR": str(self.logs_dir),
             "DB_DIR": str(self.db_dir),

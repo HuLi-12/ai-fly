@@ -43,6 +43,15 @@ def test_auth_portal_and_knowledge_routes(monkeypatch, tmp_path):
     assert "pending_execution_count" in overview["summary"]
     assert "rework_count" in overview["summary"]
     assert len(overview["work_orders"]) >= 1
+    assert len(overview["latest_todos"]) >= 1
+    assert all("target_module" in item for item in overview["latest_todos"])
+
+    maint_headers = _login(client, "zhangwei")
+    maint_overview_response = client.get("/api/v1/portal/overview", headers=maint_headers)
+    assert maint_overview_response.status_code == 200, maint_overview_response.text
+    maint_overview = maint_overview_response.json()
+    assert len(maint_overview["latest_todos"]) >= 1
+    assert any(item["task_type"] in {"tracking", "execution", "in_progress"} for item in maint_overview["latest_todos"])
 
     docs_response = client.get("/api/v1/knowledge/documents")
     assert docs_response.status_code == 200, docs_response.text

@@ -6,7 +6,8 @@ from fastapi import APIRouter
 
 from app.core.config import get_settings
 from app.core.storage import ensure_within_root, get_directory_size_bytes, get_free_space_gb
-from app.models.schemas import ProviderCheck, SystemSelfCheck
+from app.models.schemas import AgentMetricsResponse, ProviderCheck, SystemSelfCheck
+from app.repositories.agent_runtime import AgentRuntimeRepository
 from app.services.provider_runtime import check_provider_channels
 
 
@@ -43,3 +44,9 @@ def self_check() -> SystemSelfCheck:
 def provider_check() -> list[ProviderCheck]:
     settings = get_settings()
     return check_provider_channels(settings)
+
+
+@router.get("/agent-metrics", response_model=AgentMetricsResponse)
+def agent_metrics() -> AgentMetricsResponse:
+    settings = get_settings()
+    return AgentRuntimeRepository(settings.agent_runtime_db_path).get_metrics_summary()

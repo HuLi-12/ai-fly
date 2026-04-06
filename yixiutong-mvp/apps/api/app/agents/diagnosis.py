@@ -4,6 +4,7 @@ import re
 
 from app.core.config import Settings
 from app.models.schemas import DiagnosisResult, EvidenceItem, TraceabilityItem, WorkOrderDraft
+from app.services.prompting import build_diagnosis_prompt
 from app.services.provider_runtime import generate_structured_with_fallback, generate_text_with_fallback
 from app.services.work_orders import build_work_order_draft as build_structured_work_order_draft
 
@@ -15,10 +16,14 @@ DIAGNOSIS_SCHEMA = {
 }
 
 SECTION_ALIASES = {
-    "possible_causes": ("可能原因", "原因判断", "Possible causes", "Likely causes", "Causes"),
-    "recommended_checks": ("建议检查", "检查项", "Recommended checks", "Checks", "Inspection checks"),
-    "recommended_actions": ("建议处置", "处置动作", "Recommended actions", "Actions", "Immediate actions"),
+    "possible_causes": ("Possible causes", "Likely causes", "Root causes", "可能原因"),
+    "recommended_checks": ("Recommended checks", "Checks", "Inspection checks", "建议检查"),
+    "recommended_actions": ("Recommended actions", "Actions", "Immediate actions", "建议处置"),
 }
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
 
 
 def _fault_diagnosis(evidence: list[EvidenceItem], risk_matches: list[str], symptom_text: str) -> DiagnosisResult:
@@ -26,29 +31,29 @@ def _fault_diagnosis(evidence: list[EvidenceItem], risk_matches: list[str], symp
     causes: list[str] = []
     checks: list[str] = []
 
-    if any(keyword in combined for keyword in ["vibration", "bearing", "shaft", "振动", "轴承", "联轴器"]):
-        causes.append("传动链磨损、轴承松旷或联轴器偏移可能导致振动被放大。")
-        checks.append("复核联轴器、紧固件、轴承间隙和润滑状态。")
+    if _contains_any(combined, ("vibration", "bearing", "shaft", "coupling", "振动", "轴承", "联轴器")):
+        causes.append("Transmission-chain wear, loose bearings, or coupling misalignment may amplify vibration.")
+        checks.append("Verify coupling alignment, fasteners, bearing clearance, and lubrication condition.")
 
-    if any(keyword in combined for keyword in ["temperature", "cooling", "温度", "冷却", "风机"]):
-        causes.append("冷却回路效率下降或风道堵塞可能引发温升并诱发二次振动。")
-        checks.append("检查风机状态、冷却回路流量和风道洁净度。")
+    if _contains_any(combined, ("temperature", "cooling", "fan", "温度", "冷却", "风机")):
+        causes.append("Cooling-path degradation or airflow blockage may drive temperature rise and secondary vibration.")
+        checks.append("Inspect fan status, airflow path, cooling loop flow, and duct cleanliness.")
 
-    if any(keyword in combined for keyword in ["sensor", "alarm", "传感器", "报警"]):
-        causes.append("温度传感器漂移或报警链路异常可能放大告警表现。")
-        checks.append("使用手持仪表交叉校验测点并核对传感器标定记录。")
+    if _contains_any(combined, ("sensor", "alarm", "probe", "传感器", "报警")):
+        causes.append("Sensor drift or alarm-chain anomalies may amplify the observed warning pattern.")
+        checks.append("Cross-check sensor readings against handheld instruments and calibration records.")
 
     if not causes:
-        causes = ["建议按机械链路、热管理和传感链路三段顺序进行排查。"]
-        checks = ["先执行停机挂牌、外观检查和基线参数复核。"]
+        causes = ["Start with the mechanical chain, thermal management path, and sensing chain in sequence."]
+        checks = ["Lock out the equipment, complete a visual inspection, and verify baseline parameters first."]
 
     actions = [
-        "记录停机挂牌状态，并保留当前告警快照。",
-        "按机械、冷却、传感三段顺序完成排查。",
-        "如高风险项未消除，复机前升级至维修复核。",
+        "Preserve the current alarm snapshot and lock out the equipment before intrusive checks.",
+        "Execute the inspection path in mechanical, cooling, and sensing order.",
+        "Escalate to supervised review before restart if high-risk conditions remain unresolved.",
     ]
     if risk_matches:
-        actions.append("命中高风险规则后，未经人工签批不得复机。")
+        actions.append("Do not release the equipment without manual approval after a high-risk rule hit.")
 
     return DiagnosisResult(
         possible_causes=causes[:3],
@@ -59,57 +64,59 @@ def _fault_diagnosis(evidence: list[EvidenceItem], risk_matches: list[str], symp
 
 def _process_deviation(risk_matches: list[str], symptom_text: str) -> DiagnosisResult:
     causes = [
-        "关键工艺参数偏离了合格窗口。",
-        "工装或夹具磨损引入了可重复偏差。",
-        "换型或交接变更未同步到工艺卡。",
+        "A critical process parameter likely drifted outside the qualified window.",
+        "Tooling or fixture wear may have introduced a repeatable deviation pattern.",
+        "A process-card update or changeover may not have propagated to the station.",
     ]
     if "heat" in symptom_text.lower() or "热处理" in symptom_text or "固化" in symptom_text:
-        causes[0] = "热处理或固化参数偏离了合格窗口。"
-
-    actions = [
-        "冻结受影响批次，并标记为待复核。",
-        "形成临时工艺处置，明确纠偏参数和验证点。",
-        "未完成工艺签审前不得恢复正常生产。",
-    ]
-    if risk_matches:
-        actions.append("命中风险规则后，升级到工艺质量联审。")
+        causes[0] = "A heat-treatment or curing parameter likely drifted outside the qualified window."
 
     return DiagnosisResult(
         possible_causes=causes,
         recommended_checks=[
-            "对比当前过程参数、受控工艺卡和最近合格批次。",
-            "复核工装校准、夹具磨损和班组交接记录。",
-            "检查材料批次、环境温度或换型设定是否发生变化。",
+            "Compare the current parameter set against the released process card and the latest qualified batch.",
+            "Verify tooling calibration, fixture wear, and shift handoff records.",
+            "Confirm material batch, environment conditions, and changeover records.",
         ],
-        recommended_actions=actions[:4],
+        recommended_actions=[
+            "Freeze the affected batch and mark it for process review.",
+            "Prepare a temporary process disposition with corrected parameters and validation points.",
+            "Do not resume normal production until process approval is complete.",
+            *(
+                ["Escalate to joint process-quality review because a risk rule was triggered."]
+                if risk_matches
+                else []
+            ),
+        ][:4],
     )
 
 
 def _quality_inspection(risk_matches: list[str], symptom_text: str) -> DiagnosisResult:
     causes = [
-        "零件存在可重复的尺寸或表面缺陷。",
-        "检验方法漂移或量具校准异常导致误判。",
-        "上游过程不稳定形成了批次性缺陷模式。",
+        "The part shows a repeatable dimensional or surface defect pattern.",
+        "Inspection drift or measurement-tool issues may be contributing to misclassification.",
+        "An unstable upstream process may have introduced a batch-level defect mode.",
     ]
     if "scratch" in symptom_text.lower() or "划伤" in symptom_text:
-        causes[0] = "表面损伤或搬运污染是首要质量假设。"
-
-    actions = [
-        "隔离可疑零件并停止下游放行。",
-        "生成检验报告草案，附缺陷证据和追溯字段。",
-        "提交 MRB 或质量工程进行处置判定。",
-    ]
-    if risk_matches:
-        actions.append("未完成质量审批前，不得放行该批次。")
+        causes[0] = "Handling damage or contamination is the leading surface-defect hypothesis."
 
     return DiagnosisResult(
         possible_causes=causes,
         recommended_checks=[
-            "使用校准后的量具重新执行外观与尺寸复检。",
-            "追溯受影响批次、工位和检验员记录。",
-            "核对缺陷是否落入既有让步或返工标准。",
+            "Repeat the inspection with calibrated tooling and a second inspector if available.",
+            "Trace the affected batch, workstation, operator, and inspection records.",
+            "Check whether the defect falls within an existing rework, concession, or MRB standard.",
         ],
-        recommended_actions=actions[:4],
+        recommended_actions=[
+            "Quarantine the suspected batch and stop downstream release.",
+            "Package defect evidence, dimensions, and photos into an inspection report draft.",
+            "Submit the case to MRB or quality engineering for disposition.",
+            *(
+                ["Do not release the batch until quality approval is complete."]
+                if risk_matches
+                else []
+            ),
+        ][:4],
     )
 
 
@@ -141,13 +148,13 @@ def _normalize_item(text: str) -> str:
     cleaned = cleaned.strip(" -\t")
     if not cleaned:
         return ""
-    if cleaned[-1] not in ".!?。；":
+    if cleaned[-1] not in ".!?;。；":
         cleaned += "."
     return cleaned
 
 
 def _split_sentences(text: str) -> list[str]:
-    chunks = re.split(r"(?<=[.!?。；])\s*|\n+", text)
+    chunks = re.split(r"(?<=[.!?;。；])\s*|\n+", text)
     return [_normalize_item(chunk) for chunk in chunks if _normalize_item(chunk)]
 
 
@@ -186,11 +193,11 @@ def _classify_free_text(text: str) -> dict[str, list[str]]:
     }
     for sentence in sentences:
         lower = sentence.lower()
-        if any(keyword in lower for keyword in ("cause", "due to", "wear", "drift", "degradation", "damage", "instability", "原因", "磨损", "漂移", "异常", "损伤")):
+        if any(keyword in lower for keyword in ("cause", "due to", "wear", "drift", "damage", "instability", "原因", "磨损", "漂移")):
             buckets["possible_causes"].append(sentence)
-        if any(keyword in lower for keyword in ("check", "inspect", "verify", "measure", "trace", "review", "confirm", "检查", "复核", "确认", "追溯", "校验")):
+        if any(keyword in lower for keyword in ("check", "inspect", "verify", "measure", "trace", "review", "检查", "复核", "确认")):
             buckets["recommended_checks"].append(sentence)
-        if any(keyword in lower for keyword in ("hold", "stop", "escalate", "repair", "replace", "quarantine", "document", "resume", "停", "隔离", "升级", "更换", "处置", "放行")):
+        if any(keyword in lower for keyword in ("hold", "stop", "escalate", "repair", "replace", "quarantine", "document", "停", "隔离", "升级", "处置")):
             buckets["recommended_actions"].append(sentence)
     return {key: _dedupe(value) for key, value in buckets.items()}
 
@@ -229,52 +236,36 @@ def generate_diagnosis(
     evidence: list[EvidenceItem],
     risk_matches: list[str],
 ) -> tuple[DiagnosisResult, str]:
-    messages = [
-        {
-            "role": "user",
-            "content": (
-                f"场景: {scene_type}\n"
-                f"故障码/问题编号: {fault_code}\n"
-                f"症状描述: {symptom_text}\n"
-                f"补充上下文: {context_notes}\n"
-                f"证据片段: {[item.model_dump() for item in evidence]}\n"
-                f"命中规则: {risk_matches}"
-            ),
-        }
-    ]
-    system_prompt = (
-        "你是一名面向航空制造与运维场景的智能协同 Agent。"
-        "请严格基于给定证据输出诊断建议，不要编造证据中不存在的内容。"
-        "仅返回 JSON。"
+    prompt_bundle = build_diagnosis_prompt(
+        scene_type=scene_type,
+        fault_code=fault_code,
+        symptom_text=symptom_text,
+        context_notes=context_notes,
+        evidence=evidence,
+        risk_matches=risk_matches,
     )
     try:
         structured, provider_used = generate_structured_with_fallback(
             settings=settings,
-            messages=messages,
+            messages=prompt_bundle.messages,
             schema=DIAGNOSIS_SCHEMA,
-            system_prompt=system_prompt,
+            system_prompt=prompt_bundle.system_prompt,
             options={"temperature": 0.1},
         )
         diagnosis = DiagnosisResult(**structured)
         return diagnosis, provider_used
     except Exception:
         text_prompt = (
-            "你是一名面向航空制造与运维场景的智能协同 Agent。"
-            "请只基于证据回答，并按下面固定标题输出纯文本，每个标题下给 2 到 3 条简短编号项。\n"
-            "可能原因:\n"
-            "1. ...\n"
-            "2. ...\n"
-            "建议检查:\n"
-            "1. ...\n"
-            "2. ...\n"
-            "建议处置:\n"
-            "1. ...\n"
-            "2. ..."
+            f"{prompt_bundle.system_prompt}\n"
+            "Return plain text with these exact headings:\n"
+            "Possible causes:\n"
+            "Recommended checks:\n"
+            "Recommended actions:"
         )
         try:
             llm_text, provider_used = generate_text_with_fallback(
                 settings=settings,
-                messages=messages,
+                messages=prompt_bundle.messages,
                 system_prompt=text_prompt,
                 options={"temperature": 0.0, "num_predict": 220, "num_ctx": 2048},
             )

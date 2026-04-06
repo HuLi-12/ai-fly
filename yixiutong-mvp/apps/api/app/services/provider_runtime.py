@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import httpx
 
 from app.core.config import Settings
 from app.models.schemas import ProviderCheck
 from app.providers.factory import get_provider
+from app.services.agent_observability import log_agent_event
+
+
+T = TypeVar("T")
 
 
 def _is_channel_configured(settings: Settings, channel: str) -> bool:
@@ -31,6 +36,76 @@ def _openai_headers(api_key: str) -> dict[str, str]:
     if not api_key:
         return {}
     return {"Authorization": f"Bearer {api_key}"}
+
+
+def _is_retryable_exception(exc: Exception, operation: str = "", provider_label: str = "") -> bool:
+    retryable_types = (
+        httpx.TimeoutException,
+        httpx.ConnectError,
+        httpx.ReadError,
+        httpx.WriteError,
+        httpx.NetworkError,
+        httpx.RemoteProtocolError,
+    )
+    if isinstance(exc, retryable_types):
+        return True
+    if isinstance(exc, ValueError):
+        if operation == "generate_structured" and provider_label.startswith("ollama:"):
+            return False
+        return True
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+    return False
+
+
+def _invoke_with_retries(
+    settings: Settings,
+    channel: str,
+    operation: str,
+    callback: Callable[[], T],
+) -> tuple[T, str]:
+    label = _provider_label(settings, channel)
+    max_attempts = max(int(settings.provider_max_retries), 0) + 1
+
+    for attempt in range(1, max_attempts + 1):
+        started = time.perf_counter()
+        log_agent_event(
+            "provider_attempt_started",
+            {"provider": label, "operation": operation, "attempt": attempt, "max_attempts": max_attempts},
+        )
+        try:
+            result = callback()
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            log_agent_event(
+                "provider_attempt_succeeded",
+                {
+                    "provider": label,
+                    "operation": operation,
+                    "attempt": attempt,
+                    "duration_ms": duration_ms,
+                },
+            )
+            return result, label
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            retryable = _is_retryable_exception(exc, operation=operation, provider_label=label)
+            log_agent_event(
+                "provider_attempt_failed",
+                {
+                    "provider": label,
+                    "operation": operation,
+                    "attempt": attempt,
+                    "duration_ms": duration_ms,
+                    "retryable": retryable,
+                    "error": str(exc),
+                },
+            )
+            if attempt >= max_attempts or not retryable:
+                raise
+            backoff = (settings.provider_retry_backoff_ms * attempt) / 1000.0
+            time.sleep(backoff)
+
+    raise RuntimeError(f"Provider retry loop exited unexpectedly for {label}.")
 
 
 def check_provider_channel(settings: Settings, channel: str) -> ProviderCheck:
@@ -84,10 +159,7 @@ def check_provider_channel(settings: Settings, channel: str) -> ProviderCheck:
 
 
 def check_provider_channels(settings: Settings) -> list[ProviderCheck]:
-    return [
-        check_provider_channel(settings, "primary"),
-        check_provider_channel(settings, "fallback"),
-    ]
+    return [check_provider_channel(settings, "primary"), check_provider_channel(settings, "fallback")]
 
 
 def generate_structured_with_fallback(
@@ -107,12 +179,18 @@ def generate_structured_with_fallback(
         if not _is_channel_configured(settings, channel):
             errors.append(f"{channel} not configured")
             continue
+
         provider = get_provider(settings, channel=channel)
         try:
-            structured = provider.generate_structured(messages, schema, system_prompt, options)
-            return structured, _provider_label(settings, channel)
+            return _invoke_with_retries(
+                settings=settings,
+                channel=channel,
+                operation="generate_structured",
+                callback=lambda: provider.generate_structured(messages, schema, system_prompt, options),
+            )
         except Exception as exc:
             errors.append(f"{_provider_label(settings, channel)} -> {exc}")
+            continue
     raise RuntimeError("; ".join(errors) if errors else "No provider configured")
 
 
@@ -132,12 +210,18 @@ def generate_text_with_fallback(
         if not _is_channel_configured(settings, channel):
             errors.append(f"{channel} not configured")
             continue
+
         provider = get_provider(settings, channel=channel)
         try:
-            text = provider.generate_text(messages, system_prompt, options)
-            return text, _provider_label(settings, channel)
+            return _invoke_with_retries(
+                settings=settings,
+                channel=channel,
+                operation="generate_text",
+                callback=lambda: provider.generate_text(messages, system_prompt, options),
+            )
         except Exception as exc:
             errors.append(f"{_provider_label(settings, channel)} -> {exc}")
+            continue
     raise RuntimeError("; ".join(errors) if errors else "No provider configured")
 
 

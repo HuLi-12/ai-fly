@@ -72,13 +72,13 @@ export default function App() {
 
   useEffect(() => {
     if (moduleKey === "fault") {
-      workspace.applyScenePreset("fault_diagnosis");
+      workspace.changeScene("fault_diagnosis");
     }
     if (moduleKey === "process") {
-      workspace.applyScenePreset("process_deviation");
+      workspace.changeScene("process_deviation");
     }
     if (moduleKey === "quality") {
-      workspace.applyScenePreset("quality_inspection");
+      workspace.changeScene("quality_inspection");
     }
   }, [moduleKey]);
 

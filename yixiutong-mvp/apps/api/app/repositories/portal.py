@@ -595,6 +595,118 @@ class PortalRepository:
             "rework_count": len(rework),
         }
 
+    def list_latest_todos(self, user: PortalUser, limit: int = 6) -> list[dict]:
+        with self._connect() as conn:
+            work_order_rows = conn.execute("SELECT * FROM work_orders ORDER BY updated_at DESC").fetchall()
+            approval_rows = conn.execute(
+                "SELECT * FROM approval_tasks WHERE status = 'pending' ORDER BY updated_at DESC"
+            ).fetchall()
+
+        visible_approvals = [self._row_to_approval(row) for row in approval_rows]
+        if user.role not in {"admin", "supervisor"}:
+            visible_approvals = [item for item in visible_approvals if item["assignee_role"] == user.role]
+
+        approval_lookup = {item["work_order_id"]: item for item in [self._row_to_approval(row) for row in approval_rows]}
+
+        todos: list[dict] = []
+        seen_work_orders: set[str] = set()
+        for item in visible_approvals:
+            todos.append(
+                {
+                    "todo_id": f"approval:{item['approval_id']}",
+                    "work_order_id": item["work_order_id"],
+                    "task_type": "approval",
+                    "title": item["title"],
+                    "scene_type": item["scene_type"],
+                    "scene_label": item["scene_label"],
+                    "status_label": item["status_label"],
+                    "priority": item["priority"],
+                    "summary": item["comment"],
+                    "assignee_name": item["assignee_name"],
+                    "action_label": "open_approval",
+                    "target_module": "approvals",
+                    "updated_at": item["updated_at"],
+                }
+            )
+            seen_work_orders.add(item["work_order_id"])
+
+        for row in work_order_rows:
+            if not self._can_view_scene(user, row["scene_type"]):
+                continue
+
+            work_order = self._row_to_work_order(row)
+            work_order_id = work_order["work_order_id"]
+            if work_order_id in seen_work_orders:
+                continue
+
+            if work_order["status_bucket"] == "pending_execution" and work_order["assignee_role"] == user.role:
+                todos.append(
+                    {
+                        "todo_id": f"execution:{work_order_id}",
+                        "work_order_id": work_order_id,
+                        "task_type": "execution",
+                        "title": work_order["title"],
+                        "scene_type": work_order["scene_type"],
+                        "scene_label": work_order["scene_label"],
+                        "status_label": "pending_execution",
+                        "priority": work_order["priority"],
+                        "summary": work_order["latest_note"],
+                        "assignee_name": work_order["assignee_name"],
+                        "action_label": "open_execution",
+                        "target_module": "work_orders",
+                        "updated_at": work_order["updated_at"],
+                    }
+                )
+                seen_work_orders.add(work_order_id)
+                continue
+
+            if work_order["status_bucket"] == "in_progress" and work_order["assignee_role"] == user.role:
+                todos.append(
+                    {
+                        "todo_id": f"in-progress:{work_order_id}",
+                        "work_order_id": work_order_id,
+                        "task_type": "in_progress",
+                        "title": work_order["title"],
+                        "scene_type": work_order["scene_type"],
+                        "scene_label": work_order["scene_label"],
+                        "status_label": "in_progress",
+                        "priority": work_order["priority"],
+                        "summary": work_order["latest_note"],
+                        "assignee_name": work_order["assignee_name"],
+                        "action_label": "resume_processing",
+                        "target_module": "work_orders",
+                        "updated_at": work_order["updated_at"],
+                    }
+                )
+                seen_work_orders.add(work_order_id)
+                continue
+
+            if work_order["status_bucket"] == "pending_approval" and row["applicant_id"] == user.user_id:
+                pending_approval = approval_lookup.get(work_order_id)
+                todos.append(
+                    {
+                        "todo_id": f"tracking:{work_order_id}",
+                        "work_order_id": work_order_id,
+                        "task_type": "tracking",
+                        "title": work_order["title"],
+                        "scene_type": work_order["scene_type"],
+                        "scene_label": work_order["scene_label"],
+                        "status_label": "tracking",
+                        "priority": work_order["priority"],
+                        "summary": work_order["latest_note"],
+                        "assignee_name": pending_approval["assignee_name"] if pending_approval else work_order["assignee_name"],
+                        "action_label": "view_progress",
+                        "target_module": "work_orders",
+                        "updated_at": work_order["updated_at"],
+                    }
+                )
+                seen_work_orders.add(work_order_id)
+
+        task_rank = {"approval": 0, "execution": 1, "in_progress": 2, "tracking": 3}
+        todos.sort(key=lambda item: item["updated_at"], reverse=True)
+        todos.sort(key=lambda item: task_rank.get(item["task_type"], 99))
+        return todos[:limit]
+
     def decide_work_order(self, work_order_id: str, approved: bool, comment: str, edited_actions: list[str], reviewer: PortalUser | None) -> dict:
         now = _now()
         work_order = self.get_work_order_detail(work_order_id)
